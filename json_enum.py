@@ -30,6 +30,9 @@ class JsonParameterNames(AutoNumber):
     free_apikey = ()
     paid_apikey = ()
 
+    var_date = ()
+    var_date_format = ()
+
 
 
 
