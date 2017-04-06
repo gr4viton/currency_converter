@@ -79,7 +79,7 @@ from logging import error as prine
 # [] save next update as a cron - updates automatically not needed to check
 # [] save latest update time to file instead of database - quicker load - but what about redis
 
-from json_enum import JsonParameterNames as jpn
+from parameter_names_enums import JsonParameterNames as jpn
 
 from currency_converter_site import CurrencyConverterSite
 from currency_converter_site_fixer import CurrencyConverterSiteFixer
