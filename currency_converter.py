@@ -12,7 +12,8 @@ import sys
 import getopt
 
 import arrow # better then time
-import sqlite3
+from sqlalchemy import create_engine
+
 import pandas as pd
 pd.options.display.max_rows = 20
 
@@ -61,150 +62,12 @@ from pathlib import Path
 
 from json_enum import JsonParameterNames as jpn
 
+from currency_converter_site import CurrencyConverterSite
+from currency_converter_site_fixer import CurrencyConverterSiteFixer
+
 #class CurrencyConverterSiteApilayer(CurrencyConverterSite):
 
-class CurrencyConverterSite():
-    def __init__(self, name, base, strs):
-        self.name = name
-        self.base = base
-        self.strs = strs
 
-    def create_url(self):
-        pass
-
-    def create_params(self):
-        pass
-
-    def get_response(self):
-        pass
-
-    def get_this_rate_for_ccode(self, in_ccode, my_params={}):
-        pass
-
-    def get_these_rates_for_ccode(self, in_ccode, my_params={}):
-        pass
-
-    def get_all_rates_for_ccode(self, in_ccode, my_params={}):
-        pass
-
-    def get_rates_for(self, in_ccode, my_params={}):
-        self.base_url = self.base
-
-        def _add_path_(try_jpn):
-            part = self.strs.get(try_jpn, None)
-            if part:
-                self.base_url += part
-                return True
-            return False
-
-        def _add_param_(try_jpn, var=None, set_jpn=None):
-            part = self.strs.get(try_jpn, None)
-            if part:
-                if not var:
-                    var = part
-                if not set_jpn:
-                    set_jpn = try_jpn
-                my_params.update({self.strs[set_jpn] : var})
-                return True
-            return False
-
-        _add_path_(jpn.path_latest)
-
-        my_params.update({self.strs[jpn.var_in_ccode] : in_ccode})
-
-        if self.strs.get(jpn.var_apikey, None):
-            if not _add_param_(jpn.paid_apikey, set_jpn=jpn.var_apikey):
-                _add_param_(jpn.free_apikey, set_jpn=jpn.var_apikey)
-
-
-        if _add_param_(jpn.var_date):
-            curdate = arrow.now().format(self.strs[jpn.var_date_format])
-            print(curdate)
-            _add_param_(jpn.var_date, var=curdate)
-            pass
-
-        # get server output
-        print(self.base_url, my_params)
-        response = requests.get(self.base_url, params=my_params)
-
-        if not response:
-            print(response)
-            return None
-        else:
-            if response.status_code > 400 :
-                print(self.name, 'currency converter site response not found. ', response.status_code)
-                return None
-            elif response.status_code == 200:
-                print(response.json())
-
-
-        results = response.json()[self.strs[jpn.key_output]]
-        self.output = [in_ccode, results]
-        return self.output
-
-
-    def get_some_rates_for(self, in_ccode, out_ccode_str, my_params={}):
-        my_params.update({self.strs[jpn.var_out_ccode] : out_ccode_str})
-        return self.get_rates_for(in_ccode, my_params=my_params)
-
-
-    # def __str__(self):
-    #     text =
-    #     return text
-    #
-
-
-class CurrencyConverterFixer(CurrencyConverterSite):
-
-    def __init__(self, name, base, strs):
-        self.name = name
-        self.base = base
-        self.strs = strs
-        self.my_params = None
-        self.rates = None
-
-    def create_url(self):
-        self.base_url = self.base + self.strs[jpn.path_latest]
-
-    def update_params(self, in_ccode, out_ccode=None):
-        self.my_params.update({self.strs[jpn.var_in_ccode] : in_ccode})
-        if out_ccode:
-            self.my_params.update({self.strs[jpn.var_out_ccode] : out_ccode})
-
-    def get_response(self):
-        print(self.base_url, self.my_params)
-        self.response = requests.get(self.base_url, params=self.my_params)
-
-        if not self.response:
-            print(self.response)
-            return None
-        else:
-            if self.response.status_code > 400 :
-                print(self.name, 'currency converter site response not found. ', self.response.status_code)
-                return None
-            elif self.response.status_code == 200:
-                print(self.name, 'response ok')
-
-        self.in_ccode = self.response.json()[self.strs[jpn.key_in_ccode]]
-        self.other_rates = self.response.json()[self.strs[jpn.key_output]]
-        self.rates = self.other_rates
-        self.rates.update({self.in_ccode: float(1)})
-
-    def get_this_rate_for_ccode(self, in_ccode, out_ccode, start_params={}):
-        self.my_params = start_params
-        self.create_url()
-        self.update_params(in_ccode=in_ccode, out_ccode=out_ccode)
-        self.get_response()
-
-    def get_all_rates_for_ccode(self, in_ccode, my_params={}):
-        self.my_params = start_params
-        self.create_url()
-        self.update_params(in_ccode=in_ccode)
-        self.get_response()
-
-    def get_all_rates(self):
-        self.create_url()
-        self.get_response()
 
 class CurrencyConverter():
     currency_codes = {'Kc': 'CZK'}
@@ -221,9 +84,12 @@ class CurrencyConverter():
         input_cur = 'CZK'
         output_cur = 'EUR'
 
+        self.db_engine_path = 'sqlite:///db\\exchange_rates.db'
         self.db_file = 'db/exchange_rates.db'
-        self.table_name = 'rates'
-        self.db = None
+        self.rates_table_name = 'rates'
+        self.rates_info_table_name = 'rates_info'
+
+        self.sites_file = 'sites.pickle'
 
         self.in_amount = amount
         self.in_currency = input_cur
@@ -234,11 +100,11 @@ class CurrencyConverter():
         self.update_rates_data()
 
     def init_cc_sites(self):
-        self.site_list = []
+        self.sites = []
         self.init_curconv_site_fixer()
         #self.init_curconv_site_apilayer()
 
-        self.sites = {ccs.name : ccs for ccs in self.site_list}
+        #self.sites = {ccs.name : ccs for ccs in self.site_list}
 
         in_ccode = 'CZK'
         #out_ccode_str = 'EUR,USD'
@@ -254,14 +120,16 @@ class CurrencyConverter():
             jpn.var_in_ccode: 'base',
             jpn.var_out_ccode: 'symbols',
             jpn.path_latest: 'latest',
+            jpn.key_date: 'date',
+            jpn.key_date_format: 'YYYY-MM-DD',
         }
 
         # The rates are updated daily around 4PM CET.
-        fixer = CurrencyConverterFixer('fixer',
+        fixer = CurrencyConverterSiteFixer('fixer',
                                       base='http://api.fixer.io/',
                                       strs=fixer_strs
                                       )
-        self.site_list += [fixer]
+        self.sites.append(fixer)
 
 
     def init_curconv_site_apilayer(self):
@@ -296,32 +164,41 @@ class CurrencyConverter():
     def _db_connect_(self):
         self.db = sqlite3.connect(self.db_file)
 
-    def update_rates_data(self):
+
+    def request_sites_from_net(self, sites=None):
+
+        if sites is None:
+            sites = self.sites
+        elif type(sites) is not list:
+            sites = [sites]
+
+        [ site.get_all_rates() for site in sites]
 
 
-        # consult the database
-        #event = self.query_db('CREATE TABLE IF NOT EXISTS {} (id string)'.format(self.table_name))
-        #self._get_db_().commit()
-        #a = self.query_db('SELECT * FROM {};'.format(self.table_name))
-
-        sites_file = 'sites.pickle'
-        if Path(sites_file).is_file():
-            with open(sites_file, 'rb') as input:
+    def load_sites_from_pickle(self):
+        if Path(self.sites_file).is_file():
+            with open(self.sites_file, 'rb') as input:
                 self.sites = pickle.load(input)
-            print(sites_file, 'loaded')
+            print(self.sites_file, 'loaded')
             print(self.sites)
         else:
-            # get all the online data
-            [ site.get_all_rates() for site in self.sites.values()]
+            self.request_sites_from_net()
 
             print(self.sites)
-            with open(sites_file, 'wb') as output:
+            with open(self.sites_file, 'wb') as output:
                 pickle.dump(self.sites, output, pickle.HIGHEST_PROTOCOL)
-            print(sites_file, 'saved')
+            print(self.sites_file, 'saved')
 
 
-        # save data
-        for site in self.sites.values():
+    def rates_to_pandas(self, sites=None):
+        # take rates data from the most recent site
+        if sites is None:
+            sites = self.sites
+        elif type(sites) is not list:
+            sites = [sites]
+
+        for site in sites:
+
             base = site.in_ccode
             ccodes_rates = [(key, site.rates[key]) for key in sorted(site.rates.keys())]
             ccodes, rates = zip(*ccodes_rates)
@@ -336,6 +213,77 @@ class CurrencyConverter():
                     col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], digits) for row_ccode in ccodes]
                     df[col_ccode] = col
 
+            #print(df)
+            self.rates_df = df
+
+            self.rates_info_df = pd.DataFrame({'source': site.name,
+                                               'valid_from_utc': str(site.valid_from_utc),
+                                               'valid_to_utc': str(site.valid_to_utc),
+                                               'base_ccode': base}, index=[0])
+
+
+    def save_to_sql(self):
+        with self.engine.connect() as conn, conn.begin():
+            self.rates_df.to_sql(self.rates_table_name, conn, if_exists='replace')
+
+            self.rates_info_df.to_sql(self.rates_info_table_name, conn, if_exists='replace')
+
+            print('Saved to database:\n', self.rates_info_df)
+
+    def update_rates_data(self):
+
+        if not Path(self.db_file).is_file():
+            # create empty database file
+            open(self.db_file, 'a').close()
+
+        if Path(self.db_file).is_file():
+            self.engine = create_engine(self.db_engine_path)
+            if not self.engine.dialect.has_table(self.engine, self.rates_info_table_name):
+                # no saved data - need to get them and save to sql
+                self.request_sites_from_net()
+                self.rates_to_pandas()
+                self.save_to_sql()
+
+            else:
+                # database rates exist - find out if we need to request new data
+                with self.engine.connect() as conn, conn.begin():
+                    # find out database valid_to
+                    db_rates_info_df = pd.read_sql_table(self.rates_info_table_name, self.engine)
+                    print('loaded database:\n', db_rates_info_df)
+                    db_valid_to_str = str(db_rates_info_df['valid_to_utc'][0])
+                    db_valid_to = arrow.get(db_valid_to_str)
+
+                    print(arrow.utcnow(), 'utc_now')
+                    utc_now = arrow.utcnow().shift(days=+12, hours=+4)
+                    print(utc_now, 'simulated utc_now')
+
+                    update_need_and_time = [
+                        site.__class__.new_rates_available(utc_db_valid_to=db_valid_to,
+                                                           utc_now=utc_now) for site in self.sites]
+                    update_needed, latest_update = zip(*update_need_and_time)
+                    print(update_needed, latest_update )
+                    if any(update_needed):
+                        if len(latest_update) > 1:
+                            # more sites - get the latest update
+                            _, index = max(latest_update)
+                            print(index)
+                        else:
+                            index = 0
+
+                        actual_site = self.sites[index]
+                        self.request_sites_from_net(actual_site)
+                        self.rates_to_pandas(actual_site)
+                        self.save_to_sql()
+                    # for site_date in site_dates:
+                    #site_dates, db_date
+                # load
+
+                # update data
+
+        else:
+            print("""Offline database file is not present, even after creation attempt."""
+                  """\nPlease create empty file in this path:'""", Path(self.db_file),
+                  """\nWorking without offline database can be slow - for every request there is internet connection needed""")
 
 
     def init_currency_codes(self):

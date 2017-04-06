@@ -32,6 +32,8 @@ class JsonParameterNames(AutoNumber):
 
     var_date = ()
     var_date_format = ()
+    key_date = ()
+    key_date_format = ()
 
 
 
