@@ -4,7 +4,8 @@
 # https://gist.github.com/MichalCab/3c94130adf9ec0c486dfca8d0f01d794
 
 import redis
-#from redisworks import Root
+from redisworks import Root
+# import hiredis # would be faster..
 
 import requests
 import json
@@ -18,6 +19,7 @@ import time
 
 import arrow # better then time
 from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 import pandas as pd
 pd.options.display.max_rows = 20
@@ -34,6 +36,8 @@ from logging import debug as prind
 from logging import warning as prinw
 from logging import error as prine
 
+global DEBUG
+DEBUG = True
 
 #TODO
 # [x] class like
@@ -117,13 +121,54 @@ class CurrencyConverter():
         self.out_code = None
         self.digits = 4
 
-        redis_db = redis.StrictRedis(host="localhost", port=6379, db=0)
-        self.r = redis_db.info()['loading'] == 0
+        self.init_redis()
         self.csc = CurrencySymbolConverter(self.r)
 
         self.init_cc_sites()
         self.update_rates_data()
 
+    def init_redis(self):
+        # WINDOWS NOTE
+        # the first access to redis has about 1 second time penalty on windows platform. idiocy
+        self.first_contact_max_sec = 0.08
+        global DEBUG
+        if DEBUG:
+            use_redis = False # debug only
+
+        self.redis_host = 'localhost'
+        self.redis_port = 6379
+
+
+        self.r = None
+
+
+        if not use_redis:
+            return
+
+        self.start()
+        redis_db = redis.StrictRedis(host="localhost", port=6379, db=0)
+        self.end('redis strictRedis initialized')
+
+        self.start()
+        redis_db.set('redis', 'running')
+        first_contact = self.end('first redis access') # ~ 1000 ms on windows
+
+
+        self.start()
+        redis_running = redis_db.get('redis') == 'running'
+        self.end('second redis access') # ~ 0 ms on windows
+
+        redis_running = redis_db.info()['loading'] == 0
+
+        if first_contact > self.first_contact_max_sec:
+            # we don't want the redis to actually slow things down
+            redis_running = False
+
+        if redis_running :
+            self.start()
+            self.r = Root(host="localhost", port=6379, db=0)
+            self.end('redisworks root initialized')
+            prinf('Redis works root server running.')
 
     def init_cc_sites(self):
         self.sites = []
@@ -229,9 +274,12 @@ class CurrencyConverter():
             ccodes_rates = [(key, site.rates[key]) for key in sorted(site.rates.keys())]
             ccodes, rates = zip(*ccodes_rates)
 
-            df = pd.DataFrame({base: rates})
-            #df[0] = ccodes
+            #df['ccodes'] = ccodes
+            df = pd.DataFrame() #{'ccodes': ccodes})
+            df[base] = rates
             df.index = ccodes
+            #df[0] = ccodes
+            #df.index = ccodes
             #df['ccodes'] = ccodes
             #print('as')
             #df.set_index(index)
@@ -267,8 +315,10 @@ class CurrencyConverter():
     def start(self):
         self.start_time = time.time()
 
-    def end(self):
-        prinf('%s sec', time.time() - self.start_time)
+    def end(self, text=''):
+        end_time = time.time() - self.start_time
+        prinf('%s sec %s', end_time, text)
+        return end_time
 
     def db_file_exist(self):
         return Path(self.db_file).is_file()
@@ -282,11 +332,34 @@ class CurrencyConverter():
                 if not (in_ccode or out_ccode):
                     self.start()
                     # load whole database to pandas (time consuming)
-                    self.rates_df = pd.read_sql_table(self.rates_table_name, self.engine)
-                    self.end()
-                    #prinf('loaded database:\n%s', self.rates_df)
-                else:
-                    pass
+                    rates_df = pd.read_sql_table(self.rates_table_name, self.engine)
+                    self.end('loaded database')
+
+                    rates_df.index = rates_df['index']
+                    rate = rates_df[self.in_code].loc[self.out_code]
+
+                    return rate
+
+                elif in_ccode:
+                    sql_query = 'SELECT "index", {} FROM {} ;'.format(in_ccode, self.rates_table_name)
+                    #sql_query = 'SELECT "index",CZK FROM {} WHERE "index"=CZK;'.format(self.rates_table_name)
+                    prinf(sql_query)
+
+                    #sql_query = 'SELECT {} FROM {} WHERE {} = {}'.format(
+                     #   '*', self.rates_table_name, 'index', 'CZK')
+
+                    in_col_df = pd.read_sql_query(sql_query, self.engine)#, index_col='index')
+                    #prinf(in_col_df)
+
+                    if out_ccode:
+                        in_col_df.index = in_col_df['index']
+                        rate = in_col_df[in_ccode].loc[out_ccode]
+
+                        return rate
+                    else:
+                        rates = {ccode: float(rate) for ccode, rate
+                                                    in zip(in_col_df['index'], in_col_df[in_ccode])}
+                        return rates
 
 
     def update_rates_data(self):
@@ -315,7 +388,7 @@ class CurrencyConverter():
                     self.start()
                     # find out database valid_to
                     db_rates_info_df = pd.read_sql_table(self.rates_info_table_name, self.engine)
-                    self.end()
+                    self.end('loaded rates_info_table')
                     prinf('loaded database:\n%s', db_rates_info_df)
                     db_valid_to_str = str(db_rates_info_df['valid_to_utc'][0])
                     db_valid_to = arrow.get(db_valid_to_str)
@@ -382,21 +455,25 @@ class CurrencyConverter():
         if self.in_code == self.out_code:
             self.out_amount = self.in_amount
         else:
-            self.sql_to_pandas()
-            df = self.rates_df
-            df.index = df['index']
-            rate = df[self.in_code].loc[self.out_code]
-            prinf('rate = %s', rate)
+            rates = self.sql_to_pandas(self.in_code, self.out_code)
 
-            self.out_amount = round(self.in_amount * rate, self.digits)
-        self.print_json()
+            prinf('rate = %s', rates)
+            if type(rates) is not dict:
+                self.out_amount = round(self.in_amount * rates, self.digits)
+                self.print_json()
+            else:
+                self.out_amount = rates
+                self.print_json(rates_dict=rates)
 
-    def print_json(self):
+    def print_json(self, rates_dict=None):
+        if not rates_dict:
+            rates_dict = {self.out_code: float(self.out_amount)}
         self.out_dict = {self.strs[jpn.key_input]: {self.strs[jpn.key_in_amount]: float(self.in_amount),
                                                     self.strs[jpn.key_in_ccode]: self.in_code},
-                         self.strs[jpn.key_output]: {self.out_code: float(self.out_amount)}
+                         self.strs[jpn.key_output]: rates_dict
                          }
-        print(self.out_dict)
+        self.json_out = json.dumps(self.out_dict, indent=4, sort_keys=True)
+        print(self.json_out)
 
 
 def parse_arguments():
@@ -419,3 +496,5 @@ if __name__ == '__main__':
    cc = CurrencyConverter(*params)
    cc.convert()
    prinf('%s complete code sec', time.time() - start)
+   # ~ 123ms without redis on windows (2? database loads)
+   #

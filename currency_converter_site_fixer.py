@@ -7,11 +7,12 @@ import time
 
 import logging
 #logging.basicConfig(filename='run.log', filemode='w', level=logging.DEBUG)
-logging.basicConfig(level=logging.DEBUG)
+#logging.basicConfig(level=logging.DEBUG)
 
 from logging import info as prinf
 from logging import debug as prind
 from logging import warning as prinw
+from logging import error as prine
 
 class CurrencyConverterSiteFixer(CurrencyConverterSite):
     name = 'fixer'
