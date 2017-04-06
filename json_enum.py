@@ -9,9 +9,8 @@ class AutoNumber(enum.Enum):
 
 class JsonParameterNames(AutoNumber):
     """
-    DataDictParameterNames == dd
+    JsonParameterNames = jpn
     """
-
 
     key_input = () # string for input dictionary title
     key_in_amount = () # string for input amount title
@@ -37,24 +36,9 @@ class JsonParameterNames(AutoNumber):
 
 
 
+class RedisParameterNames(AutoNumber):
+    """
+    RedisParameterNames = rpn
+    """
 
-# ./currency_converter.py --amount 100.0 --input_currency EUR --output_currency CZK
-# {
-#     "input": {
-#         "amount": 100.0,
-#         "currency": "EUR"
-#     },
-#     "output": {
-#         "CZK": 2707.36,
-#     }
-# }
-
-# http://api.fixer.io/latest?symbols=USD,GBP
-# {
-#     "base": "EUR",
-#     "date": "2017-03-31",
-#     "rates": {
-#         "GBP": 0.85553,
-#         "USD": 1.0691
-#     }
-# }
+    csc_initialized = () # currency_symbol_converter_initialized
