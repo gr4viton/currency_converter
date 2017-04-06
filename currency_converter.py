@@ -1,14 +1,16 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 # task assignment here:
 # https://gist.github.com/MichalCab/3c94130adf9ec0c486dfca8d0f01d794
-
 
 import redis
 
 import requests
 import json
 #import BeautifulSoup
+
 import sys
+
 import getopt
 
 import time
@@ -29,6 +31,8 @@ logging.basicConfig(level=logging.DEBUG)
 from logging import info as prinf
 from logging import debug as prind
 from logging import warning as prinw
+from logging import error as prine
+
 
 #TODO
 # [x] class like
@@ -36,6 +40,7 @@ from logging import warning as prinw
 # [] multiple currencies have similar symbols = decision tree - http://www.xe.com/symbols.php
 # [] use pandas
 # [] use redis - second program with interprogram communication
+# - expire time - to the next update from any site
 
 # [] more prices
 # [] graph?
@@ -80,10 +85,66 @@ from currency_converter_site_fixer import CurrencyConverterSiteFixer
 
 #class CurrencyConverterSiteApilayer(CurrencyConverterSite):
 
+class CurrencySymbolConverter():
+    def __init__(self):
 
+        #print(u'€'.encode('utf-8'))
+        ccode_str = u'KC:CZK,K\xc8:CZK,$:USD,\xc2\xa5:JPY,\xc2\xa3:GBP,\xe2\x82\xac:EUR'
+
+        twin_del = ','
+        dict_del = ':'
+        self.currency_symbols = {key: value
+                               for key,value in [key_value.split(dict_del)
+                                                 for key_value in ccode_str.split(twin_del)]}
+        prinf('currency_symbols = %s', self.currency_symbols)
+
+        #self.init_currency_symbols()
+
+
+    def init_currency_symbols(self):
+        # not implemented
+        self.base_url = 'http://www.xe.com/symbols.php'
+        self.response = requests.get(self.base_url)
+        if not self.response:
+            prinf(self.response)
+            return None
+
+        #beautifulSoup
+        #a = self.response.json()['currencySymblTable']
+        #prinf(a)
+
+    def get_currency_code(self, currency_str):
+        #print([ (c) for c in currency_str])
+        #currency_str = currency_str.decode('string_escape')
+        enc = 'utf-8'
+        #currency_str = currency_str.decode()
+        c_s = currency_str
+        print(type(c_s))
+        #c_s = c_s.decode(enc)
+        print(type(c_s))
+        yen = u'\xc2\xa5'
+        print(type(yen))
+
+        print('c_s', [ord(i) for i in c_s])
+        print('yen', [ord(i) for i in yen])
+        print(c_s==yen)
+
+        # if currency_str == b'\xc2\xa5':
+        #     print('YES\n'*5)
+        if len(currency_str) == 3:
+            if all([char.isupper() for char in currency_str]):
+                # the currency_str has 3 chars and its all upper letters
+                # - according to http://www.xe.com/symbols.php it is probably currency code
+                return currency_str
+
+        #currency_str = currency_str.upper()
+        ccode = self.currency_symbols.get(currency_str, None)
+        if ccode:
+            return ccode
+        else:
+            return None
 
 class CurrencyConverter():
-    currency_codes = {'Kc': 'CZK'}
     currency_servers = ['http://www.xe.com/symbols.php']
 
     strs = {jpn.key_input: 'input',
@@ -93,9 +154,9 @@ class CurrencyConverter():
 
     def __init__(self, amount, input_cur, output_cur):
 
-        amount = 10
-        input_cur = 'CZK'
-        output_cur = 'EUR'
+        # amount = 10
+        # input_cur = 'CZK'
+        # output_cur = 'EUR'
 
         self.db_engine_path = 'sqlite:///db\\exchange_rates.db'
         self.db_file = 'db/exchange_rates.db'
@@ -106,11 +167,18 @@ class CurrencyConverter():
 
         self.in_amount = amount
         self.in_currency = input_cur
+        #print(input_cur)
         self.out_currency = output_cur
         self.in_code = self.out_code = None
 
+        # not needed every time
+        self.init_currency_symbols()
+
         self.init_cc_sites()
         self.update_rates_data()
+
+    def init_currency_symbols(self):
+        self.csc = CurrencySymbolConverter()
 
     def init_cc_sites(self):
         self.sites = []
@@ -119,9 +187,9 @@ class CurrencyConverter():
 
         #self.sites = {ccs.name : ccs for ccs in self.site_list}
 
-        in_ccode = 'CZK'
+        #in_ccode = 'CZK'
         #out_ccode_str = 'EUR,USD'
-        out_ccode_str = 'EUR'
+        #out_ccode_str = 'EUR'
 
 
 
@@ -179,13 +247,12 @@ class CurrencyConverter():
 
 
     def request_sites_from_net(self, sites=None):
-
         if sites is None:
             sites = self.sites
         elif type(sites) is not list:
             sites = [sites]
 
-        [ site.get_all_rates() for site in sites]
+        [site.get_all_rates() for site in sites]
 
 
     def load_sites_from_pickle(self):
@@ -202,8 +269,7 @@ class CurrencyConverter():
                 pickle.dump(self.sites, output, pickle.HIGHEST_PROTOCOL)
             prinf('%s saved', self.sites_file)
 
-
-    def rates_to_pandas(self, sites=None, latest=None):
+    def sites_to_pandas(self, sites=None, latest=None):
         # take rates data from the most recent site
         if sites is None:
             sites = self.sites
@@ -214,12 +280,12 @@ class CurrencyConverter():
             latest_updates = [site.valid_from_utc for site in sites]
             if len(latest_update) > 1:
                 # more sites - get the latest update
-                _, index = max(latest_update)
+                _, idx = max(latest_update)
                 #prinf(index)
             else:
-                index = 0
+                idx = 0
 
-            sites = [self.sites[index]]
+            sites = [self.sites[idx]]
 
         for site in sites:
 
@@ -228,7 +294,15 @@ class CurrencyConverter():
             ccodes, rates = zip(*ccodes_rates)
 
             df = pd.DataFrame({base: rates})
+            #df[0] = ccodes
             df.index = ccodes
+            #df['ccodes'] = ccodes
+            #print('as')
+            #df.set_index(index)
+            #df.set_index([str(ccode) for ccode in ccodes])
+            #prinf('ccodes type %s', type(ccodes[1]))
+
+
 
             digits = 4
             # calculate other values from base column - round digits
@@ -237,13 +311,11 @@ class CurrencyConverter():
                     col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], digits) for row_ccode in ccodes]
                     df[col_ccode] = col
 
-            #prinf(df)
             self.rates_df = df
-
             self.rates_info_df = pd.DataFrame({'source': site.name,
                                                'valid_from_utc': str(site.valid_from_utc),
                                                'valid_to_utc': str(site.valid_to_utc),
-                                               'base_ccode': base}, index=[0])
+                                               'base_ccode': base}, index=[1])
 
     def save_to_sql(self):
         with self.engine.connect() as conn, conn.begin():
@@ -254,25 +326,43 @@ class CurrencyConverter():
             prinf('Saved to database:\n%s', self.rates_info_df)
 
     def start(self):
-        self.start = time.time()
+        self.start_time = time.time()
 
     def end(self):
-        prinf(time.time() - self.start)
+        prinf('%s sec', time.time() - self.start_time)
+
+    def db_file_exist(self):
+        return Path(self.db_file).is_file()
+
+    def sql_to_pandas(self, in_ccode=None, out_ccode=None):
+        if self.db_file_exist():
+            self.engine = create_engine(self.db_engine_path)
+            rates_table_exist = self.engine.dialect.has_table(self.engine, self.rates_table_name)
+            if rates_table_exist:
+
+                if not (in_ccode or out_ccode):
+                    self.start()
+                    # load whole database to pandas (time consuming)
+                    self.rates_df = pd.read_sql_table(self.rates_table_name, self.engine)
+                    self.end()
+                    #prinf('loaded database:\n%s', self.rates_df)
+                else:
+                    pass
+
 
     def update_rates_data(self):
-
-        if not Path(self.db_file).is_file():
+        if not self.db_file_exist():
             # create empty database file
             open(self.db_file, 'a').close()
 
-        if Path(self.db_file).is_file():
+        if self.db_file_exist():
             self.engine = create_engine(self.db_engine_path)
 
-            rates_table_exist = self.engine.dialect.has_table(self.engine, self.rates_info_table_name)
-            if not rates_table_exist:
+            rates_info_table_exist = self.engine.dialect.has_table(self.engine, self.rates_info_table_name)
+            if not rates_info_table_exist:
                 # need to get data from the internet
                 self.request_sites_from_net()
-                self.rates_to_pandas()
+                self.sites_to_pandas()
                 # store them to database
                 self.save_to_sql()
             else:
@@ -282,11 +372,11 @@ class CurrencyConverter():
                     self.start()
                     # find out database valid_to
                     db_rates_info_df = pd.read_sql_table(self.rates_info_table_name, self.engine)
+                    self.end()
                     prinf('loaded database:\n%s', db_rates_info_df)
                     db_valid_to_str = str(db_rates_info_df['valid_to_utc'][0])
                     db_valid_to = arrow.get(db_valid_to_str)
 
-                    self.end()
                     # simulating different time
                     utc_now = arrow.utcnow()
                     prinf('%s utc_now', utc_now)
@@ -299,72 +389,76 @@ class CurrencyConverter():
                                                            utc_now=utc_now) for site in self.sites]
                     update_needed, latest_update = zip(*update_need_and_time)
 
-                    prinf('%s\n %s', update_needed, latest_update )
+                    prinf('update needed in sites:\n%s\nlatest_update dates:\n%s', update_needed, latest_update )
 
                     if any(update_needed):
                         if len(latest_update) > 1:
                             # more sites - get the latest update
-                            _, index = max(latest_update)
-                            prinf(index)
+                            _, idx = max(latest_update)
+                            prinf(idx)
                         else:
-                            index = 0
+                            idx = 0
 
-                        actual_site = self.sites[index]
+                        actual_site = self.sites[idx]
                         self.request_sites_from_net(actual_site)
-                        self.rates_to_pandas(actual_site)
+                        self.sites_to_pandas(actual_site)
                         self.save_to_sql()
                 # load
 
                 # update data
 
         else:
-            pass
-            #prinw(str("""Offline database file is not present, even after creation attempt."""
-            #      """\nPlease create empty file in this path:'""", Path(self.db_file),
-            #      """\nWorking without offline database can be slow - for every request there is internet connection needed"""))
+            prinw("""Offline database file is not present, even after creation attempt."""
+                  """\nPlease create empty file in this path: <%s>"""
+                  """\nWorking without offline database can be slow - for every request there is internet connection needed"""
+                  , str(Path(self.db_file)))
 
 
-    def init_currency_codes(self):
-        pass
 
-    @staticmethod
-    def get_currency_code(currency):
-        currency = currency.upper()
-        if currency in CurrencyConverter.currency_codes.values():
-            return currency
-        else:
-            return CurrencyConverter.currency_codes.get(currency, None)
-
-    def convert_symbols(self):
-        self.in_code = CurrencyConverter.get_currency_code(self.in_currency)
+    def convert_to_ccode(self):
+        self.in_code = self.csc.get_currency_code(self.in_currency)
         if self.in_code is None:
-            prinw('Currency symbol [{}] is not in our database.'.format(self.in_currency))
+            prine('Currency symbol [{}] is not in our database.'.format(self.in_currency))
             # suggest the nearest textually?
             sys.exit(2)
 
-        self.out_code = CurrencyConverter.get_currency_code(self.out_currency)
+        self.out_code = self.csc.get_currency_code(self.out_currency)
+        if self.out_code is None:
+            prine('Currency symbol [{}] is not in our database.'.format(self.out_currency))
+            # suggest the nearest textually?
+            sys.exit(2)
 
     def convert(self):
         # connected to internet?
         # start redis if not running
         #
         #
-        self.convert_symbols()
+        #self.in_amount = 10
+        #self.in_currency = 'CZK'
+        #self.out_currency = r'\xc2\xa5'
+        #self.in_currency = b'\xc2\xa5'
+        #self.out_currency = b'AUD'
 
-        self.in_code = 'CZK'
-        self.out_code = 'EUR'
-        self.out_amount = 1.0
-        self.prinf_json()
+        prinf('converting in=%s, out=%s', self.in_currency, self.out_currency)
+        self.convert_to_ccode()
+        prinf('converted in=%s, out=%s', self.in_code, self.out_code)
 
+        self.sql_to_pandas()
+        df = self.rates_df
+        df.index = df['index']
+        #prinf(df.index.tolist())
+        rate = df[self.out_code].loc[self.in_code]
+        prinf('rate = %s', rate)
 
+        self.out_amount = self.in_amount * rate
+        self.print_json()
 
-
-    def prinf_json(self):
+    def print_json(self):
         self.out_dict = {self.strs[jpn.key_input]: { self.strs[jpn.key_in_amount] : float(self.in_amount),
                                                        self.strs[jpn.key_in_ccode] : self.in_code },
                          self.strs[jpn.key_output] : { self.out_code : float(self.out_amount) }
                          }
-        prinf(self.out_dict)
+        print(self.out_dict)
 
 
 def parse_arguments(argv):
@@ -396,5 +490,7 @@ def parse_arguments(argv):
 
 if __name__ == '__main__':
    params = parse_arguments(sys.argv[1:])
+   start = time.time()
    cc = CurrencyConverter(*params)
-  # cc.convert()
+   cc.convert()
+   prinf('%s complete code sec', time.time() - start)
