@@ -4,6 +4,7 @@
 # https://gist.github.com/MichalCab/3c94130adf9ec0c486dfca8d0f01d794
 
 import redis
+#from redisworks import Root
 
 import requests
 import json
@@ -116,7 +117,8 @@ class CurrencyConverter():
         self.out_code = None
         self.digits = 4
 
-        self.r = redis.StrictRedis()
+        redis_db = redis.StrictRedis(host="localhost", port=6379, db=0)
+        self.r = redis_db.info()['loading'] == 0
         self.csc = CurrencySymbolConverter(self.r)
 
         self.init_cc_sites()

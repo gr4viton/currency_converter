@@ -1,7 +1,7 @@
 
 import arrow
 from currency_converter_site import CurrencyConverterSite
-from json_enum import JsonParameterNames as jpn
+from parameter_names_enums import JsonParameterNames as jpn
 import requests
 import time
 
@@ -41,7 +41,7 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         self.valid_from_utc = self.__class__.stamp_time(date_time)
         prinf('%s valid_from_utc', self.valid_from_utc)
         self.valid_to_utc = self.__class__.stamp_valid_to(self.valid_from_utc)
-        prinf('%s valid_to_utc', self.valid_to_utc )
+        prinf('%s valid_to_utc', self.valid_to_utc)
         prinf('%s now', arrow.utcnow())
 
     @staticmethod
