@@ -11,7 +11,7 @@ import json
 
 import sys
 
-import getopt
+import argparse
 
 import time
 
@@ -36,25 +36,26 @@ from logging import error as prine
 
 #TODO
 # [x] class like
-# [] use decorators
-# [] multiple currencies have similar symbols = decision tree - http://www.xe.com/symbols.php
-# [] use pandas
+# [x] use decorators
+# [n] multiple currencies have similar symbols = decision tree - http://www.xe.com/symbols.php
+# [x] use pandas
 # [] use redis - second program with interprogram communication
 # - expire time - to the next update from any site
 
-# [] more prices
-# [] graph?
-# []
-# [] vanila vs updated getopt function
+# [n] more prices
+# [n] graph?
+
+# [n] vanila vs updated getopt function
 # [] one commit - in master branch - multiple in other branches
 
-# [] currency signes vs symbols vs names
+# [x] currency signes vs symbols
+# [n] vs names
 
 # [] otestovat funkcnost
 # [] asserty
 # [] unit test?? - nose2 module
 
-# [] prinf to syserr - decorator??
+# [x] prinf to syserr - logger
 
 # [] localisation
 
@@ -62,7 +63,7 @@ from logging import error as prine
 
 # [] suggest the nearest textually? - parameter for automatic nearest suggestion conversion
 
-# [] have offline database for case without connection !
+# [x] have offline database for case without connection !
 
 #OUTPUT = json with following structure:
 #{
@@ -76,7 +77,7 @@ from logging import error as prine
 # }
 
 # [] save next update as a cron - updates automatically not needed to check
-# [] save latest update to file instead of database
+# [] save latest update time to file instead of database - quicker load - but what about redis
 
 from json_enum import JsonParameterNames as jpn
 
@@ -89,7 +90,8 @@ class CurrencySymbolConverter():
     def __init__(self):
 
         #print(u'€'.encode('utf-8'))
-        ccode_str = u'KC:CZK,K\xc8:CZK,$:USD,\xc2\xa5:JPY,\xc2\xa3:GBP,\xe2\x82\xac:EUR'
+        #ccode_str = u'KC:CZK,K\xc8:CZK,$:USD,\xc2\xa5:JPY,\xc2\xa3:GBP,\xe2\x82\xac:EUR'
+        ccode_str = u'KC:CZK,Kč:CZK,$:USD,\xa5:JPY,\xa3:GBP,\xac:EUR'
 
         twin_del = ','
         dict_del = ':'
@@ -114,23 +116,6 @@ class CurrencySymbolConverter():
         #prinf(a)
 
     def get_currency_code(self, currency_str):
-        #print([ (c) for c in currency_str])
-        #currency_str = currency_str.decode('string_escape')
-        enc = 'utf-8'
-        #currency_str = currency_str.decode()
-        c_s = currency_str
-        print(type(c_s))
-        #c_s = c_s.decode(enc)
-        print(type(c_s))
-        yen = u'\xc2\xa5'
-        print(type(yen))
-
-        print('c_s', [ord(i) for i in c_s])
-        print('yen', [ord(i) for i in yen])
-        print(c_s==yen)
-
-        # if currency_str == b'\xc2\xa5':
-        #     print('YES\n'*5)
         if len(currency_str) == 3:
             if all([char.isupper() for char in currency_str]):
                 # the currency_str has 3 chars and its all upper letters
@@ -142,6 +127,7 @@ class CurrencySymbolConverter():
         if ccode:
             return ccode
         else:
+            prine('Currency symbol [%s] is not in our database.', self.currency_str)
             return None
 
 class CurrencyConverter():
@@ -170,6 +156,7 @@ class CurrencyConverter():
         #print(input_cur)
         self.out_currency = output_cur
         self.in_code = self.out_code = None
+        self.digits = 4
 
         # not needed every time
         self.init_currency_symbols()
@@ -304,11 +291,11 @@ class CurrencyConverter():
 
 
 
-            digits = 4
-            # calculate other values from base column - round digits
+
+            # calculate other values from base column - do not round digits
             for col_ccode in ccodes:
                 if col_ccode != base:
-                    col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], digits) for row_ccode in ccodes]
+                    col = [df[base].loc[row_ccode] / df[base].loc[col_ccode]for row_ccode in ccodes]
                     df[col_ccode] = col
 
             self.rates_df = df
@@ -418,26 +405,19 @@ class CurrencyConverter():
     def convert_to_ccode(self):
         self.in_code = self.csc.get_currency_code(self.in_currency)
         if self.in_code is None:
-            prine('Currency symbol [{}] is not in our database.'.format(self.in_currency))
             # suggest the nearest textually?
             sys.exit(2)
 
-        self.out_code = self.csc.get_currency_code(self.out_currency)
-        if self.out_code is None:
-            prine('Currency symbol [{}] is not in our database.'.format(self.out_currency))
-            # suggest the nearest textually?
-            sys.exit(2)
+        if self.out_code:
+            self.out_code = self.csc.get_currency_code(self.out_currency)
+            if self.out_code is None:
+                # suggest the nearest textually?
+                sys.exit(2)
 
     def convert(self):
         # connected to internet?
         # start redis if not running
-        #
-        #
-        #self.in_amount = 10
-        #self.in_currency = 'CZK'
-        #self.out_currency = r'\xc2\xa5'
-        #self.in_currency = b'\xc2\xa5'
-        #self.out_currency = b'AUD'
+
 
         prinf('converting in=%s, out=%s', self.in_currency, self.out_currency)
         self.convert_to_ccode()
@@ -446,50 +426,36 @@ class CurrencyConverter():
         self.sql_to_pandas()
         df = self.rates_df
         df.index = df['index']
-        #prinf(df.index.tolist())
         rate = df[self.out_code].loc[self.in_code]
         prinf('rate = %s', rate)
 
-        self.out_amount = self.in_amount * rate
+        self.out_amount = round(self.in_amount * rate, self.digits)
         self.print_json()
 
     def print_json(self):
-        self.out_dict = {self.strs[jpn.key_input]: { self.strs[jpn.key_in_amount] : float(self.in_amount),
-                                                       self.strs[jpn.key_in_ccode] : self.in_code },
-                         self.strs[jpn.key_output] : { self.out_code : float(self.out_amount) }
+        self.out_dict = {self.strs[jpn.key_input]: {self.strs[jpn.key_in_amount]: float(self.in_amount),
+                                                    self.strs[jpn.key_in_ccode]: self.in_code},
+                         self.strs[jpn.key_output]: {self.out_code: float(self.out_amount)}
                          }
         print(self.out_dict)
 
 
-def parse_arguments(argv):
-    amount = None
-    input_cur = None
-    output_cur = None
-
-    help_text = """test.py --amount <float_amount> --input_currency <currency_symbol> """ + \
-                """(--output_currency <currency_symbol>)"""
-
-    try:
-        opts, args = getopt.getopt(argv,'h:a:i:o:', ['help=','amount=', 'input_currency=', 'output_currency='])
-    except getopt.GetoptError:
-        prinf(help_text)
-        sys.exit(2)
-
-    for opt, arg in opts:
-        if opt in ('-h', '--help'):
-            prinf(help_text)
-            sys.exit()
-        elif opt in ('-a', '--amount'):
-            amount = arg
-        elif opt in ('-i', '--input_currency'):
-            input_cur = arg
-        elif opt in ('-o', '--output_currency'):
-            output_cur = arg
+def parse_arguments():
+    epilog = '''Currency codes according to http://www.xe.com/iso4217.php'''
+    parser = argparse.ArgumentParser(description='Convert amount of one currency to another.',
+                                     epilog=epilog)
+    parser.add_argument('--amount', type=float, required=True, help='Money amount to be exchanged')
+    parser.add_argument('--input_currency', required=True, help='Input currency code / symbol')
+    parser.add_argument('--output_currency', help='Output currency code / symbol')
+    args = parser.parse_args()
+    amount = args.amount
+    input_cur = args.input_currency
+    output_cur = args.output_currency
 
     return amount, input_cur, output_cur
 
 if __name__ == '__main__':
-   params = parse_arguments(sys.argv[1:])
+   params = parse_arguments()
    start = time.time()
    cc = CurrencyConverter(*params)
    cc.convert()
