@@ -88,22 +88,20 @@ from currency_converter_site_fixer import CurrencyConverterSiteFixer
 
 class CurrencySymbolConverter():
     def __init__(self):
+        self.ccode_str = u'Kc:CZK,Kč:CZK,$:USD,\xa5:JPY,\xa3:GBP,\xac:EUR'
+        self.currency_symbols = None
 
-        #print(u'€'.encode('utf-8'))
-        #ccode_str = u'KC:CZK,K\xc8:CZK,$:USD,\xc2\xa5:JPY,\xc2\xa3:GBP,\xe2\x82\xac:EUR'
-        ccode_str = u'KC:CZK,Kč:CZK,$:USD,\xa5:JPY,\xa3:GBP,\xac:EUR'
-
+    def init_currency_symbols(self):
+        # not needed every time
         twin_del = ','
         dict_del = ':'
         self.currency_symbols = {key: value
                                for key,value in [key_value.split(dict_del)
-                                                 for key_value in ccode_str.split(twin_del)]}
+                                                 for key_value in self.ccode_str.split(twin_del)]}
         prinf('currency_symbols = %s', self.currency_symbols)
 
-        #self.init_currency_symbols()
 
-
-    def init_currency_symbols(self):
+    def __init_currency_symbols_from_xe__(self):
         # not implemented
         self.base_url = 'http://www.xe.com/symbols.php'
         self.response = requests.get(self.base_url)
@@ -122,7 +120,9 @@ class CurrencySymbolConverter():
                 # - according to http://www.xe.com/symbols.php it is probably currency code
                 return currency_str
 
-        #currency_str = currency_str.upper()
+        if self.currency_symbols is None:
+            self.init_currency_symbols()
+
         ccode = self.currency_symbols.get(currency_str, None)
         if ccode:
             return ccode
@@ -140,10 +140,6 @@ class CurrencyConverter():
 
     def __init__(self, amount, input_cur, output_cur):
 
-        # amount = 10
-        # input_cur = 'CZK'
-        # output_cur = 'EUR'
-
         self.db_engine_path = 'sqlite:///db\\exchange_rates.db'
         self.db_file = 'db/exchange_rates.db'
         self.rates_table_name = 'rates'
@@ -153,32 +149,22 @@ class CurrencyConverter():
 
         self.in_amount = amount
         self.in_currency = input_cur
-        #print(input_cur)
+
         self.out_currency = output_cur
-        self.in_code = self.out_code = None
+        self.out_amount = None
+        self.in_code = None
+        self.out_code = None
         self.digits = 4
 
-        # not needed every time
-        self.init_currency_symbols()
+        self.csc = CurrencySymbolConverter()
 
         self.init_cc_sites()
         self.update_rates_data()
 
-    def init_currency_symbols(self):
-        self.csc = CurrencySymbolConverter()
 
     def init_cc_sites(self):
         self.sites = []
         self.init_curconv_site_fixer()
-        #self.init_curconv_site_apilayer()
-
-        #self.sites = {ccs.name : ccs for ccs in self.site_list}
-
-        #in_ccode = 'CZK'
-        #out_ccode_str = 'EUR,USD'
-        #out_ccode_str = 'EUR'
-
-
 
     def init_curconv_site_fixer(self):
 
@@ -265,9 +251,9 @@ class CurrencyConverter():
 
         if latest:
             latest_updates = [site.valid_from_utc for site in sites]
-            if len(latest_update) > 1:
+            if len(latest_updates) > 1:
                 # more sites - get the latest update
-                _, idx = max(latest_update)
+                _, idx = max(latest_updates)
                 #prinf(index)
             else:
                 idx = 0
@@ -295,7 +281,7 @@ class CurrencyConverter():
             # calculate other values from base column - do not round digits
             for col_ccode in ccodes:
                 if col_ccode != base:
-                    col = [df[base].loc[row_ccode] / df[base].loc[col_ccode]for row_ccode in ccodes]
+                    col = [df[base].loc[row_ccode] / df[base].loc[col_ccode] for row_ccode in ccodes]
                     df[col_ccode] = col
 
             self.rates_df = df
@@ -345,6 +331,10 @@ class CurrencyConverter():
         if self.db_file_exist():
             self.engine = create_engine(self.db_engine_path)
 
+            # possible not use database for loading rates_info_table_exist = use file
+            #rates_info_txt_exist = self.Path(self.rates_info_txt_file)
+            #if rates_info_txt_exist:
+
             rates_info_table_exist = self.engine.dialect.has_table(self.engine, self.rates_info_table_name)
             if not rates_info_table_exist:
                 # need to get data from the internet
@@ -374,14 +364,14 @@ class CurrencyConverter():
                     update_need_and_time = [
                         site.__class__.new_rates_available(utc_db_valid_to=db_valid_to,
                                                            utc_now=utc_now) for site in self.sites]
-                    update_needed, latest_update = zip(*update_need_and_time)
+                    update_needed, latest_updates = zip(*update_need_and_time)
 
-                    prinf('update needed in sites:\n%s\nlatest_update dates:\n%s', update_needed, latest_update )
+                    prinf('update needed in sites:\n%s\nlatest_update dates:\n%s', update_needed, latest_updates )
 
                     if any(update_needed):
-                        if len(latest_update) > 1:
+                        if len(latest_updates) > 1:
                             # more sites - get the latest update
-                            _, idx = max(latest_update)
+                            _, idx = max(latest_updates)
                             prinf(idx)
                         else:
                             idx = 0
@@ -408,7 +398,7 @@ class CurrencyConverter():
             # suggest the nearest textually?
             sys.exit(2)
 
-        if self.out_code:
+        if self.out_currency:
             self.out_code = self.csc.get_currency_code(self.out_currency)
             if self.out_code is None:
                 # suggest the nearest textually?
@@ -423,13 +413,16 @@ class CurrencyConverter():
         self.convert_to_ccode()
         prinf('converted in=%s, out=%s', self.in_code, self.out_code)
 
-        self.sql_to_pandas()
-        df = self.rates_df
-        df.index = df['index']
-        rate = df[self.out_code].loc[self.in_code]
-        prinf('rate = %s', rate)
+        if self.in_code == self.out_code:
+            self.out_amount = self.in_amount
+        else:
+            self.sql_to_pandas()
+            df = self.rates_df
+            df.index = df['index']
+            rate = df[self.in_code].loc[self.out_code]
+            prinf('rate = %s', rate)
 
-        self.out_amount = round(self.in_amount * rate, self.digits)
+            self.out_amount = round(self.in_amount * rate, self.digits)
         self.print_json()
 
     def print_json(self):
