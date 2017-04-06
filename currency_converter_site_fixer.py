@@ -5,6 +5,14 @@ from json_enum import JsonParameterNames as jpn
 import requests
 
 
+import logging
+#logging.basicConfig(filename='run.log', filemode='w', level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+
+from logging import info as prinf
+from logging import debug as prind
+from logging import warning as prinw
+
 class CurrencyConverterSiteFixer(CurrencyConverterSite):
 
     def __init__(self, name, base, strs):
@@ -30,10 +38,10 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         fmt = self.strs[jpn.key_date_format]
         date_time = arrow.get(date_cet, fmt)
         self.valid_from_utc = self.__class__.stamp_time(date_time)
-        print(self.valid_from_utc , 'valid_from_utc ')
+        prinf(self.valid_from_utc , 'valid_from_utc ')
         self.valid_to_utc = self.__class__.stamp_valid_to(self.valid_from_utc)
-        print(self.valid_to_utc , 'valid_to_utc ')
-        print(arrow.utcnow(), 'now')
+        prinf(self.valid_to_utc , 'valid_to_utc ')
+        prinf(arrow.utcnow(), 'now')
 
     @staticmethod
     def stamp_time(utc):
@@ -68,8 +76,8 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
     @classmethod
     def new_rates_available(cls, utc_db_valid_to, utc_now=None):
         latest_rates_update = cls.latest_rates_update(utc_now)
-        print(latest_rates_update, 'latest_rates_update')
-        print(utc_db_valid_to, 'db_valid_to')
+        prinf('%s latest_rates_update', latest_rates_update)
+        prinf('%s db_valid_to', utc_db_valid_to)
         if latest_rates_update <= utc_db_valid_to:
             # old data are latest - no new request needed
             return False, latest_rates_update
@@ -79,18 +87,18 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
 
 
     def get_response(self):
-        print(self.base_url, 'params:', self.my_params)
+        prinf(self.base_url, 'params:', self.my_params)
         self.response = requests.get(self.base_url, params=self.my_params)
 
         if not self.response:
-            print(self.response)
+            prinf(self.response)
             return None
         else:
             if self.response.status_code > 400 :
-                print(self.name, 'currency converter site response not found. ', self.response.status_code)
+                prinw('%s currency converter site response not found. %s', self.name, self.response.status_code)
                 return None
             elif self.response.status_code == 200:
-                print(self.name, 'response ok')
+                prinw('%s response ok', self.name)
 
         self.in_ccode = self.response.json()[self.strs[jpn.key_in_ccode]]
         self.stamp_datetime()

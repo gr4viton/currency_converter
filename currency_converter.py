@@ -11,6 +11,8 @@ import json
 import sys
 import getopt
 
+import time
+
 import arrow # better then time
 from sqlalchemy import create_engine
 
@@ -19,6 +21,14 @@ pd.options.display.max_rows = 20
 
 import pickle # dev
 from pathlib import Path
+
+import logging
+#logging.basicConfig(filename='run.log', filemode='w', level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+
+from logging import info as prinf
+from logging import debug as prind
+from logging import warning as prinw
 
 #TODO
 # [x] class like
@@ -37,9 +47,9 @@ from pathlib import Path
 
 # [] otestovat funkcnost
 # [] asserty
-# [] unit test??
+# [] unit test?? - nose2 module
 
-# [] print to syserr - decorator??
+# [] prinf to syserr - decorator??
 
 # [] localisation
 
@@ -59,6 +69,9 @@ from pathlib import Path
 #         <3 letter currency code>: <float>
 #     }
 # }
+
+# [] save next update as a cron - updates automatically not needed to check
+# [] save latest update to file instead of database
 
 from json_enum import JsonParameterNames as jpn
 
@@ -179,23 +192,34 @@ class CurrencyConverter():
         if Path(self.sites_file).is_file():
             with open(self.sites_file, 'rb') as input:
                 self.sites = pickle.load(input)
-            print(self.sites_file, 'loaded')
-            print(self.sites)
+            prinf('%s loaded', self.sites_file)
+            prinf(self.sites)
         else:
             self.request_sites_from_net()
 
-            print(self.sites)
+            prinf(self.sites)
             with open(self.sites_file, 'wb') as output:
                 pickle.dump(self.sites, output, pickle.HIGHEST_PROTOCOL)
-            print(self.sites_file, 'saved')
+            prinf('%s saved', self.sites_file)
 
 
-    def rates_to_pandas(self, sites=None):
+    def rates_to_pandas(self, sites=None, latest=None):
         # take rates data from the most recent site
         if sites is None:
             sites = self.sites
         elif type(sites) is not list:
             sites = [sites]
+
+        if latest:
+            latest_updates = [site.valid_from_utc for site in sites]
+            if len(latest_update) > 1:
+                # more sites - get the latest update
+                _, index = max(latest_update)
+                #prinf(index)
+            else:
+                index = 0
+
+            sites = [self.sites[index]]
 
         for site in sites:
 
@@ -213,7 +237,7 @@ class CurrencyConverter():
                     col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], digits) for row_ccode in ccodes]
                     df[col_ccode] = col
 
-            #print(df)
+            #prinf(df)
             self.rates_df = df
 
             self.rates_info_df = pd.DataFrame({'source': site.name,
@@ -221,14 +245,19 @@ class CurrencyConverter():
                                                'valid_to_utc': str(site.valid_to_utc),
                                                'base_ccode': base}, index=[0])
 
-
     def save_to_sql(self):
         with self.engine.connect() as conn, conn.begin():
             self.rates_df.to_sql(self.rates_table_name, conn, if_exists='replace')
 
             self.rates_info_df.to_sql(self.rates_info_table_name, conn, if_exists='replace')
 
-            print('Saved to database:\n', self.rates_info_df)
+            prinf('Saved to database:\n%s', self.rates_info_df)
+
+    def start(self):
+        self.start = time.time()
+
+    def end(self):
+        prinf(time.time() - self.start)
 
     def update_rates_data(self):
 
@@ -238,35 +267,45 @@ class CurrencyConverter():
 
         if Path(self.db_file).is_file():
             self.engine = create_engine(self.db_engine_path)
-            if not self.engine.dialect.has_table(self.engine, self.rates_info_table_name):
-                # no saved data - need to get them and save to sql
+
+            rates_table_exist = self.engine.dialect.has_table(self.engine, self.rates_info_table_name)
+            if not rates_table_exist:
+                # need to get data from the internet
                 self.request_sites_from_net()
                 self.rates_to_pandas()
+                # store them to database
                 self.save_to_sql()
-
             else:
-                # database rates exist - find out if we need to request new data
+                # database rates exist
+                # - find out if we need to request new data
                 with self.engine.connect() as conn, conn.begin():
+                    self.start()
                     # find out database valid_to
                     db_rates_info_df = pd.read_sql_table(self.rates_info_table_name, self.engine)
-                    print('loaded database:\n', db_rates_info_df)
+                    prinf('loaded database:\n%s', db_rates_info_df)
                     db_valid_to_str = str(db_rates_info_df['valid_to_utc'][0])
                     db_valid_to = arrow.get(db_valid_to_str)
 
-                    print(arrow.utcnow(), 'utc_now')
-                    utc_now = arrow.utcnow().shift(days=+12, hours=+4)
-                    print(utc_now, 'simulated utc_now')
+                    self.end()
+                    # simulating different time
+                    utc_now = arrow.utcnow()
+                    prinf('%s utc_now', utc_now)
+                    #utc_now = utc_now.shift(days=+12, hours=+4)
+                    prinf('%s simulated utc_now', utc_now)
 
+                    # which sites can give us later rates then the ones saved in database
                     update_need_and_time = [
                         site.__class__.new_rates_available(utc_db_valid_to=db_valid_to,
                                                            utc_now=utc_now) for site in self.sites]
                     update_needed, latest_update = zip(*update_need_and_time)
-                    print(update_needed, latest_update )
+
+                    prinf('%s\n %s', update_needed, latest_update )
+
                     if any(update_needed):
                         if len(latest_update) > 1:
                             # more sites - get the latest update
                             _, index = max(latest_update)
-                            print(index)
+                            prinf(index)
                         else:
                             index = 0
 
@@ -274,16 +313,15 @@ class CurrencyConverter():
                         self.request_sites_from_net(actual_site)
                         self.rates_to_pandas(actual_site)
                         self.save_to_sql()
-                    # for site_date in site_dates:
-                    #site_dates, db_date
                 # load
 
                 # update data
 
         else:
-            print("""Offline database file is not present, even after creation attempt."""
-                  """\nPlease create empty file in this path:'""", Path(self.db_file),
-                  """\nWorking without offline database can be slow - for every request there is internet connection needed""")
+            pass
+            #prinw(str("""Offline database file is not present, even after creation attempt."""
+            #      """\nPlease create empty file in this path:'""", Path(self.db_file),
+            #      """\nWorking without offline database can be slow - for every request there is internet connection needed"""))
 
 
     def init_currency_codes(self):
@@ -300,7 +338,7 @@ class CurrencyConverter():
     def convert_symbols(self):
         self.in_code = CurrencyConverter.get_currency_code(self.in_currency)
         if self.in_code is None:
-            print('Currency symbol [{}] is not in our database.'.format(self.in_currency), file=sys.stderr)
+            prinw('Currency symbol [{}] is not in our database.'.format(self.in_currency))
             # suggest the nearest textually?
             sys.exit(2)
 
@@ -316,19 +354,17 @@ class CurrencyConverter():
         self.in_code = 'CZK'
         self.out_code = 'EUR'
         self.out_amount = 1.0
-        self.print_json()
+        self.prinf_json()
 
 
-    #def get_exchange_rates(self):
 
 
-    def print_json(self):
+    def prinf_json(self):
         self.out_dict = {self.strs[jpn.key_input]: { self.strs[jpn.key_in_amount] : float(self.in_amount),
                                                        self.strs[jpn.key_in_ccode] : self.in_code },
                          self.strs[jpn.key_output] : { self.out_code : float(self.out_amount) }
                          }
-#        print(json.dump(self.out_dict))
-        print(self.out_dict)
+        prinf(self.out_dict)
 
 
 def parse_arguments(argv):
@@ -342,12 +378,12 @@ def parse_arguments(argv):
     try:
         opts, args = getopt.getopt(argv,'h:a:i:o:', ['help=','amount=', 'input_currency=', 'output_currency='])
     except getopt.GetoptError:
-        print(help_text)
+        prinf(help_text)
         sys.exit(2)
 
     for opt, arg in opts:
         if opt in ('-h', '--help'):
-            print(help_text)
+            prinf(help_text)
             sys.exit()
         elif opt in ('-a', '--amount'):
             amount = arg
