@@ -16,6 +16,9 @@ import sqlite3
 import pandas as pd
 pd.options.display.max_rows = 20
 
+import pickle # dev
+from pathlib import Path
+
 #TODO
 # [x] class like
 # [] use decorators
@@ -182,31 +185,26 @@ class CurrencyConverterFixer(CurrencyConverterSite):
             elif self.response.status_code == 200:
                 print(self.name, 'response ok')
 
-        self.results = self.response.json()[self.strs[jpn.key_output]]
-
-    def update_rates(self):
-        self.rates = self.results
-        print(self.results)
-
+        self.in_ccode = self.response.json()[self.strs[jpn.key_in_ccode]]
+        self.other_rates = self.response.json()[self.strs[jpn.key_output]]
+        self.rates = self.other_rates
+        self.rates.update({self.in_ccode: float(1)})
 
     def get_this_rate_for_ccode(self, in_ccode, out_ccode, start_params={}):
         self.my_params = start_params
         self.create_url()
         self.update_params(in_ccode=in_ccode, out_ccode=out_ccode)
         self.get_response()
-        self.update_rates()
 
     def get_all_rates_for_ccode(self, in_ccode, my_params={}):
         self.my_params = start_params
         self.create_url()
         self.update_params(in_ccode=in_ccode)
         self.get_response()
-        self.update_rates()
 
     def get_all_rates(self):
         self.create_url()
         self.get_response()
-        self.update_rates()
 
 class CurrencyConverter():
     currency_codes = {'Kc': 'CZK'}
@@ -306,11 +304,38 @@ class CurrencyConverter():
         #self._get_db_().commit()
         #a = self.query_db('SELECT * FROM {};'.format(self.table_name))
 
-        # get all the online data
-        [ site.get_all_rates() for site in self.sites.values()]
+        sites_file = 'sites.pickle'
+        if Path(sites_file).is_file():
+            with open(sites_file, 'rb') as input:
+                self.sites = pickle.load(input)
+            print(sites_file, 'loaded')
+            print(self.sites)
+        else:
+            # get all the online data
+            [ site.get_all_rates() for site in self.sites.values()]
+
+            print(self.sites)
+            with open(sites_file, 'wb') as output:
+                pickle.dump(self.sites, output, pickle.HIGHEST_PROTOCOL)
+            print(sites_file, 'saved')
+
 
         # save data
-        pd.
+        for site in self.sites.values():
+            base = site.in_ccode
+            ccodes_rates = [(key, site.rates[key]) for key in sorted(site.rates.keys())]
+            ccodes, rates = zip(*ccodes_rates)
+
+            df = pd.DataFrame({base: rates})
+            df.index = ccodes
+
+            digits = 4
+            # calculate other values from base column - round digits
+            for col_ccode in ccodes:
+                if col_ccode != base:
+                    col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], digits) for row_ccode in ccodes]
+                    df[col_ccode] = col
+
 
 
     def init_currency_codes(self):
@@ -388,4 +413,4 @@ def parse_arguments(argv):
 if __name__ == '__main__':
    params = parse_arguments(sys.argv[1:])
    cc = CurrencyConverter(*params)
-   cc.convert()
+  # cc.convert()
