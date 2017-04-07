@@ -7,6 +7,7 @@ from logging import error as prine
 class CurrencySymbolConverter():
     def __init__(self, r):
         self.r = r
+
         self.ccode_str = u'Kc:CZK,Kč:CZK,$:USD,\xa5:CNY,\xa3:GBP,\xac:EUR'
         self.currency_symbols = None
 
@@ -33,8 +34,7 @@ class CurrencySymbolConverter():
                 prinf(self.r.csc.currency_symbols)
                 self.r.csc.initialized = True
 
-    def void(self, item):
-        pass
+
     def __init_currency_symbols_from_xe__(self):
         # not implemented
         self.base_url = 'http://www.xe.com/symbols.php'

@@ -12,70 +12,50 @@ from redisworks import Root
 import requests
 import json
 #import BeautifulSoup
+import platform
 
 import sys
-
 import argparse
-
 import time
 
 import arrow # better then time
 from sqlalchemy import create_engine
 #from sqlalchemy.orm import sessionmaker
 
-import pandas as pd
-pd.options.display.max_rows = 20
 
-import pickle # dev
+import pickle  # for dev only
 from pathlib import Path
 
 import logging
-#logging.basicConfig(filename='run.log', filemode='w', level=logging.DEBUG)
-logging.basicConfig(level=logging.DEBUG)
-#logging.basicConfig(level=logging.WARNING)
 
 from logging import info as prinf
 from logging import debug as prind
 from logging import warning as prinw
 from logging import error as prine
 
+import pandas as pd
+pd.options.display.max_rows = 20
+
+#logging.basicConfig(filename='run.log', filemode='w', level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+#logging.basicConfig(level=logging.WARNING
 global DEBUG
 DEBUG = ''
-DEBUG = 'simulate_time'
+#DEBUG = 'simulate_time'
 
 #TODO
-# [x] class like
-# [x] use decorators
-# [n] multiple currencies have similar symbols = decision tree - http://www.xe.com/symbols.php
-# [x] use pandas
-# [] use redis - second program with interprogram communication
-# - expire time - to the next update from any site
-
-# [n] more prices
-# [n] graph?
-
-# [n] vanila vs updated getopt function
 # [] one commit - in master branch - multiple in other branches
+# [] another site then fixer
+# [] comments
+# [] PIP8
+# [] readme.md
+# [] commit to master
 
-# [x] currency signes vs symbols
-# [n] vs names
 
-# [] otestovat funkcnost
-# [] asserty
-# [] unit test?? - nose2 module
-
-# [x] prinf to syserr - logger
-
-# [] localisation
-
-# [] time effectivity!!! - measurement - argument = fast or robust
-
-# [] suggest the nearest textually? - parameter for automatic nearest suggestion conversion
-
-# [x] have offline database for case without connection !
-
-#OUTPUT = json with following structure:
-#{
+### OUTPUT
+# - json with following structure:
+#```
+# {
 #    "input": {
 #         "amount": <float>,
 #         "currency": <3 letter currency code>
@@ -84,20 +64,60 @@ DEBUG = 'simulate_time'
 #         <3 letter currency code>: <float>
 #     }
 # }
+# ```
 
-# [] save next update as a cron - updates automatically not needed to check
-# [] save latest update time to file instead of database - quicker load - but what about redis
-# [] multithreading - load from database at start in different thread - use or not later
 
-# featuring
-# - smart internet connection and currency conversion sites response detection 
 
-# not using these controversial tricks to get lower latency
-# - returning exchange rate immediatelly after reading (from sql/redis)
-#  -- even if in second thread updating the database afterwards
-#  -- user gets better response time, but the first time he calls, he can get outdated rates
-#   --- we certainly don't want that on the first start after a long time (olddated sql database)
-#   --- it can be implemented w/o further ado, but only if the server with redis is updated frequently
+### Featuring
+# - smart internet connection and currency conversion sites response detection
+# -- currency conversion sites implemented: fixer.io
+# - offline currencies database
+# -- automatic offline database update on detection of new rates update from any implemented site
+# --- data_valid_utc is stored separately in txt file - faster then another sql database query
+# - time effective conversion
+# -- tested on windows 64
+# --- w/o update offline database triggered : ~ 50 ms
+# --- else : ~ 1200ms
+# - standard logger for logging
+# - argparser for input argument parsing - help string autogeneration
+# - manually tested
+# -- 3 types input arguments from assignment <https://gist.github.com/MichalCab/3c94130adf9ec0c486dfca8d0f01d794>
+# -- another common currency symbols - Kč, $, CNY-symbol, GBP-symbol, EUR-symbol
+# - used modules:
+# -- pandas, sqlalchemy, redis, redisworks, requests, json
+# -- arrow, argparse
+# -- platform, socket, sys, time, pathlib, logging, pickle
+# - using decorators: staticmethod, classmethod
+
+
+
+### Disclaimer
+#### Not using these controversial tricks to get lower latency
+##### [x] Immediate exchange rate json output after reading (from sql/redis)
+#  - implemented style: First the program tries to find out if the database should be updated
+#  - not implemented: First run the program returns json data from offline database
+#   -- even if in second thread updating the database afterwards
+#   -- user gets better response time, but the first time he calls, he can get outdated rates
+#    --- we certainly don't want that on the first start after a long time (olddated sql database)
+#    --- it can be implemented w/o further ado, but only if the server with redis is updated frequently
+
+#### Not implemented (yet) - future releases maybe
+# - full redis support for rates
+# -- expire time - to the known time of next update from any implemented site
+# - currency conversion rates from multiple sources in the offline database
+# -- e.g. if CZK is not in the selected most fresh currency converter site - it will not be converted to/from
+# - multithreading - load from database at start in different thread - use the data or not later
+# -- after finding the offline data are not fresh enough
+# - automatic database update as a background service
+# -- would update sql database and redis automatically not needed to check every time the convert is triggered
+# - automatic testing via asserts and node2 module
+# - user input error autocorrection
+# -- suggestion of the textually nearest currency
+# -- another program argument for automatic nearest suggestion conversion
+# -- localisation of output / logger texts into other languages
+# - modules to possibly use:
+# -- hiredis - can be 10 times faster on windows..
+# -- BeautifulSoup - for automatic currency symbol to currency code conversion from site <http://www.xe.com/symbols.php>
 
 from parameter_names_enums import JsonParameterNames as jpn
 
@@ -111,24 +131,22 @@ from currency_symbol_converter import CurrencySymbolConverter
 
 
 class CurrencyConverter():
-    currency_servers = ['http://www.xe.com/symbols.php']
 
     strs = {jpn.key_input: 'input',
             jpn.key_in_amount: 'amount',
             jpn.key_in_ccode: 'currency',
             jpn.key_output: 'output'}
 
-    def __init__(self, amount, input_cur, output_cur, use_redis):
-        #redis port = 6379
+    def __init__(self, use_redis):
 
         self.sites_file = 'sites.pickle'
 
-        self.in_amount = amount
-        self.in_currency = input_cur
-
-        self.out_currency = output_cur
-        self.out_amount = None
+        self.in_amount = None
+        self.in_currency = None
         self.in_code = None
+
+        self.out_currency = None
+        self.out_amount = None
         self.out_code = None
         self.out_digits = 2
 
@@ -160,7 +178,7 @@ class CurrencyConverter():
         self.use_redis = use_redis
         # WINDOWS NOTE
         # the first access to redis has about 1 second time penalty on windows platform. idiocracy
-        self.first_contact_max_sec = 0.08
+        self.first_contact_max_sec = 20.5
 
         self.redis_host = 'localhost'
         self.redis_port = 6379
@@ -258,7 +276,6 @@ class CurrencyConverter():
             sites = self.sites
         elif type(sites) is not list:
             sites = [sites]
-
 
         no_response_count = 0
         responded_count = 0
@@ -391,17 +408,9 @@ class CurrencyConverter():
 
                 elif in_ccode:
                     sql_query = 'SELECT "index", {} FROM {} ;'.format(in_ccode, self.rates_table_name)
-                    sql_query = 'SELECT "index", {} FROM {} {};'.format(
-                        in_ccode, self.rates_table_name, '')
-                        # 'WHERE USD="index"')
-                    prinf(sql_query)
-
-                    #sql_query = 'SELECT {} FROM {} WHERE {} = {}'.format(
-                     #   '*', self.rates_table_name, 'index', 'CZK')
                     self._start_()
-                    in_col_df = pd.read_sql_query(sql_query, self.engine)#, index_col='index')
+                    in_col_df = pd.read_sql_query(sql_query, self.engine)
                     self._end_('loaded query read_sql_query')
-                    prinf(in_col_df)
 
                     if out_ccode:
                         in_col_df.index = in_col_df['index']
@@ -528,12 +537,6 @@ class CurrencyConverter():
                 actual_site = self.sites[idx]
                 self.update_rates_data_from_web(actual_site)
 
-
-
-
-
-
-
     def convert_to_ccode(self):
         self.in_code = self.csc.get_currency_code(self.in_currency)
         if self.in_code is None:
@@ -546,10 +549,17 @@ class CurrencyConverter():
                 # suggest the nearest textually?
                 sys.exit(2)
 
-    def convert(self):
-        # connected to internet?
-        # start redis if not running
-
+    def convert(self, amount, input_cur, output_cur=None):
+        """ Converts amount of money in <input_cur> currency to <output_cur> currency
+        amount <float> - Money amount to be converted
+        input
+        """
+        self.in_amount = amount
+        self.in_currency = input_cur
+        self.out_currency = output_cur
+        if not all([self.in_amount, self.in_currency]):
+            prine('Arguments [amount] and [input_cur] are both required to convert!')
+            return None
 
         prinf('converting in=%s, out=%s', self.in_currency, self.out_currency)
         self.convert_to_ccode()
@@ -581,12 +591,20 @@ class CurrencyConverter():
 
 
 def parse_arguments():
+    """ Parses program arguments
+    --amount - amount which we want to convert - float
+    --input_currency - input currency - 3 letters name or currency symbol
+    --output_currency - requested/output currency - 3 letters name or currency symbol
+    """
     epilog = '''Currency codes according to http://www.xe.com/iso4217.php'''
     parser = argparse.ArgumentParser(description='Convert amount of one currency to another.',
                                      epilog=epilog)
-    parser.add_argument('--amount', type=float, required=True, help='Money amount to be exchanged')
-    parser.add_argument('--input_currency', required=True, help='Input currency code / symbol')
-    parser.add_argument('--output_currency', help='Output currency code / symbol')
+    parser.add_argument('--amount', type=float, required=True,
+                        help='Amount which we want to convert - float')
+    parser.add_argument('--input_currency', required=True,
+                        help='Input currency - 3 letters name or currency symbol')
+    parser.add_argument('--output_currency',
+                        help='Requested/output currency - 3 letters name or currency symbol')
     args = parser.parse_args()
     amount = args.amount
     input_cur = args.input_currency
@@ -595,10 +613,30 @@ def parse_arguments():
     return amount, input_cur, output_cur
 
 if __name__ == '__main__':
-   params = parse_arguments()
-   start_time = time.time()
-   use_redis = False # on windows - 1 sec time penalty on first contact
-   cc = CurrencyConverter(*params, use_redis=use_redis)
-   cc.convert()
-   prinf('%s ms - complete code', round((time.time() - start_time)*1000, 2))
-   # ~ 44 ms on windows w/o redis
+    """ Converts amount of currency according to program arguments
+    - Program arguments parsing
+    - Redis usage decision
+    - CurrencyConverter initializaton
+    - Conversion according to parsed arguments
+    """
+    start_time = time.time()
+
+    # parsing of arguments
+    params = parse_arguments()
+
+    # redis usage
+    use_redis = True
+    use_redis_on_windows = False
+    if platform.system() == 'Windows':
+        # on windows - 1 sec time penalty on first contact with redis
+        use_redis = use_redis_on_windows
+        prinw('Not using redis - Windows platform has 1 sec latency on first contact!')
+
+    # main code
+    cc = CurrencyConverter(use_redis=use_redis)
+    cc.convert(*params)
+
+    prinf('%s ms - complete code', round((time.time() - start_time)*1000, 2))
+    # ~ 44 ms on windows w/o redis
+
+    #print('\n'.join(dir(cc)))
