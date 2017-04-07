@@ -29,7 +29,8 @@ from pathlib import Path
 
 import logging
 #logging.basicConfig(filename='run.log', filemode='w', level=logging.DEBUG)
-logging.basicConfig(level=logging.DEBUG)
+#logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 
 from logging import info as prinf
 from logging import debug as prind
@@ -119,7 +120,7 @@ class CurrencyConverter():
         self.out_amount = None
         self.in_code = None
         self.out_code = None
-        self.digits = 4
+        self.out_digits = 2
 
         self.init_redis()
         self.csc = CurrencySymbolConverter(self.r)
@@ -459,10 +460,11 @@ class CurrencyConverter():
 
             prinf('rate = %s', rates)
             if type(rates) is not dict:
-                self.out_amount = round(self.in_amount * rates, self.digits)
+                self.out_amount = round(self.in_amount * rates, self.out_digits)
                 self.print_json()
             else:
-                self.out_amount = rates
+                self.out_amount = None
+                rates = {key: round(self.in_amount * value, self.out_digits) for key, value in rates.items()}
                 self.print_json(rates_dict=rates)
 
     def print_json(self, rates_dict=None):

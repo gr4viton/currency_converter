@@ -7,7 +7,7 @@ from logging import error as prine
 class CurrencySymbolConverter():
     def __init__(self, r):
         self.r = r
-        self.ccode_str = u'Kc:CZK,Kč:CZK,$:USD,\xa5:JPY,\xa3:GBP,\xac:EUR'
+        self.ccode_str = u'Kc:CZK,Kč:CZK,$:USD,\xa5:CNY,\xa3:GBP,\xac:EUR'
         self.currency_symbols = None
 
     def init_currency_symbols(self):
