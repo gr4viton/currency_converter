@@ -45,6 +45,15 @@ Program for conversion from one currency to another
 }
 ```
 
+### Trigger online update
+- to trigger offline sql disk database update from online cconversion sites
+-- Declare global variable DEBUG with value including 'simulate_time'
+--- This makes the [get_sites_states] function thing the time is 12 days in the future
+--- Future date triggers the program to think new rates are available
+-- Delete one or both files
+--- db/rates_info.nfo = sql database valid_to date info
+--- db/exchange_rates.db = sql database with offline rates
+
 ## Disclaimer
 ### Not using these controversial tricks to get lower latency
 #### [x] Immediate exchange rate json output after reading (from sql/redis)
@@ -52,12 +61,14 @@ Program for conversion from one currency to another
  - not implemented: First run the program returns json data from offline database
   -- even if in second thread updating the database afterwards
   -- user gets better response time, but the first time he calls, he can get outdated rates
-   --- we certainly don't want that on the first start after a long time (olddated sql database)
+   --- we certainly do not want that on the first start after a long time (olddated sql database)
    --- it can be implemented w/o further ado, but only if the server with redis is updated frequently
 
 ### Not implemented (yet) - future releases maybe
 - full redis support for rates
 -- expire time - to the known time of next update from any implemented site
+- automatic selection of cconversion site dependent on offered currency codes conversion
+-- e.g if CZK is not in the most fresh currency converter site - it will not be converted to/from
 - currency conversion rates from multiple sources in the offline database
 -- e.g. if CZK is not in the selected most fresh currency converter site - it will not be converted to/from
 - multithreading - load from database at start in different thread - use the data or not later
