@@ -3,6 +3,8 @@
 # task assignment here:
 # https://gist.github.com/MichalCab/3c94130adf9ec0c486dfca8d0f01d794
 
+import socket  # internet connection detection
+
 import redis
 from redisworks import Root
 # import hiredis # would be faster..
@@ -38,8 +40,8 @@ from logging import warning as prinw
 from logging import error as prine
 
 global DEBUG
-#DEBUG = 'simulate_time'
 DEBUG = ''
+DEBUG = 'simulate_time'
 
 #TODO
 # [x] class like
@@ -85,6 +87,17 @@ DEBUG = ''
 
 # [] save next update as a cron - updates automatically not needed to check
 # [] save latest update time to file instead of database - quicker load - but what about redis
+# [] multithreading - load from database at start in different thread - use or not later
+
+# featuring
+# - smart internet connection and currency conversion sites response detection 
+
+# not using these controversial tricks to get lower latency
+# - returning exchange rate immediatelly after reading (from sql/redis)
+#  -- even if in second thread updating the database afterwards
+#  -- user gets better response time, but the first time he calls, he can get outdated rates
+#   --- we certainly don't want that on the first start after a long time (olddated sql database)
+#   --- it can be implemented w/o further ado, but only if the server with redis is updated frequently
 
 from parameter_names_enums import JsonParameterNames as jpn
 
@@ -134,7 +147,6 @@ class CurrencyConverter():
         self.db_engine_path = 'sqlite:///db\\exchange_rates.db'
         self.db_file = 'db/exchange_rates.db'
         self.rates_table_name = 'rates'
-        self.rates_info_table_name = 'rates_info'
         self.engine = None
 
     def init_txt(self):
@@ -176,7 +188,7 @@ class CurrencyConverter():
             # we don't want the redis to actually slow things down
             redis_running = False
 
-        if redis_running :
+        if redis_running:
             self._start_()
             self.r = Root(host="localhost", port=6379, db=0)
             self._end_('redisworks root initialized')
@@ -185,6 +197,10 @@ class CurrencyConverter():
     def init_cc_sites(self):
         self.sites = []
         self.init_curconv_site_fixer()
+
+        # when using more cconverter sites - it can happen that some of them do not respond
+        # if more then <no_response_trigger> sites do not respond - it will trigger internet_on() detection
+        self.no_response_trigger = 3
 
     def init_curconv_site_fixer(self):
 
@@ -243,7 +259,33 @@ class CurrencyConverter():
         elif type(sites) is not list:
             sites = [sites]
 
-        [site.get_all_rates() for site in sites]
+
+        no_response_count = 0
+        responded_count = 0
+        if len(sites) > 1:
+            no_response_trigger = self.no_response_trigger
+            for site in sites:
+                response = site.get_all_rates()
+                if not response:
+                    no_response_count += 1
+                else:
+                    responded_count += 1
+                if responded_count == 0 and no_response_count > no_response_trigger :
+                    # when at least <no_response_trigger> count sites don't respond
+                    # - trigger internet connection detection
+                    if not self.internet_on():
+                        return False
+                    else:
+                        # if the internet is connected - add up <no_response_trigger>
+                        no_response_trigger += self.no_response_trigger
+        else:
+            # not useful to try connection to internet (~60ms)
+            # if only one cconvertion site is available
+            if sites[0].get_all_rates():
+                responded_count = 1
+
+        at_least_one_site_responded = responded_count > 0
+        return at_least_one_site_responded
 
     def _load_sites_from_pickle_(self):
         if Path(self.sites_file).is_file():
@@ -278,7 +320,6 @@ class CurrencyConverter():
             sites = [self.sites[idx]]
 
         for site in sites:
-
             base = site.in_ccode
             ccodes_rates = [(key, site.rates[key]) for key in sorted(site.rates.keys())]
             ccodes, rates = zip(*ccodes_rates)
@@ -295,25 +336,17 @@ class CurrencyConverter():
                     df[col_ccode] = col
 
             self.rates_df = df
-            self.rates_info_df = pd.DataFrame({'source': site.name,
-                                               'valid_from_utc': str(site.valid_from_utc),
-                                               'valid_to_utc': str(site.valid_to_utc),
-                                               'base_ccode': base}, index=[1])
 
-            self.rates_info_lines = '\n'.join([str(site.valid_from_utc), str(site.valid_to_utc)])
+            self.rates_info_lines = '\n'.join([str(i) for i in [site.valid_from_utc, site.valid_to_utc,
+                                                                site.name, base]])
 
     def save_to_sql(self):
         self.create_engine()
+        self.touch_db_file()
         with self.engine.connect() as conn, conn.begin():
             self._start_()
             self.rates_df.to_sql(self.rates_table_name, conn, if_exists='replace')
             self._end_('saved rates_df.to_sql')
-
-            self._start_()
-            self.rates_info_df.to_sql(self.rates_info_table_name, conn, if_exists='replace')
-            self._end_('saved rates_info_df.to_sql')
-
-            #prinf('Saved to database:\n%s', self.rates_info_df)
 
             # write to file too
             self._start_()
@@ -326,7 +359,7 @@ class CurrencyConverter():
 
     def _end_(self, text=''):
         end_time = time.time() - self._start_time_
-        prinf('%s sec %s', end_time, text)
+        prinf('%s ms %s', round(end_time*1000,2), text)
         return end_time
 
     def create_engine(self):
@@ -358,7 +391,9 @@ class CurrencyConverter():
 
                 elif in_ccode:
                     sql_query = 'SELECT "index", {} FROM {} ;'.format(in_ccode, self.rates_table_name)
-                    #sql_query = 'SELECT "index",CZK FROM {} WHERE "index"=CZK;'.format(self.rates_table_name)
+                    sql_query = 'SELECT "index", {} FROM {} {};'.format(
+                        in_ccode, self.rates_table_name, '')
+                        # 'WHERE USD="index"')
                     prinf(sql_query)
 
                     #sql_query = 'SELECT {} FROM {} WHERE {} = {}'.format(
@@ -366,7 +401,7 @@ class CurrencyConverter():
                     self._start_()
                     in_col_df = pd.read_sql_query(sql_query, self.engine)#, index_col='index')
                     self._end_('loaded query read_sql_query')
-                    #prinf(in_col_df)
+                    prinf(in_col_df)
 
                     if out_ccode:
                         in_col_df.index = in_col_df['index']
@@ -387,11 +422,11 @@ class CurrencyConverter():
             self._start_()
             with open(self.rates_info_txt_file, 'r', encoding=self.encoding) as f:
                 whole = f.readlines()
-                if len(whole) != 2:
-                    prinw('rates_info_txt_file is empty')
+                if len(whole) < 2:
+                    prinw('rates_info_txt_file does not contain lines with db_valid_to_str, db_valid_from_str!')
                     return None
                 else:
-                    db_valid_to_str, db_valid_from_str = whole
+                    db_valid_to_str, db_valid_from_str = whole[0:2]
                     db_valid_to = arrow.get(db_valid_to_str)
 
             self._end_('loaded rates_info_txt_file') # ~ 8 ms
@@ -400,36 +435,12 @@ class CurrencyConverter():
             prinw('rates_info_txt_file does not exist')
             return None
 
-    def get_db_valid_to_from_sql(self):
+    def touch_db_file(self):
         if not self.db_file_exist():
             # create empty database file
             open(self.db_file, 'a').close()
 
-        if self.db_file_exist():
-            self.create_engine()
-
-            self._start_()
-            rates_info_table_exist = self.engine.dialect.has_table(self.engine, self.rates_info_table_name)
-            self._end_('has_table querry ended') # ~ 4 ms
-
-            if not rates_info_table_exist:
-                return None
-            else:
-
-                # - find out if we need to request new data
-                with self.engine.connect() as conn, conn.begin():
-                    self._start_()
-                    # find out database valid_to
-                    db_rates_info_df = pd.read_sql_table(self.rates_info_table_name, self.engine)
-                    self._end_('loaded rates_info_table_sql') # ~ 27 ms
-                    prinf('loaded database db_rates_info_df:\n%s', db_rates_info_df)
-                    db_valid_to_str = str(db_rates_info_df['valid_to_utc'][0])
-                    db_valid_to = arrow.get(db_valid_to_str)
-
-                return db_valid_to
-
-
-        else:
+        if not self.db_file_exist():
             prinw("""Offline database file is not present, even after creation attempt."""
                   """\nPlease create empty file in this path: <%s>"""
                   """\nWorking without offline sql database can be slow - for every request there is internet connection needed"""
@@ -439,8 +450,6 @@ class CurrencyConverter():
 
     def get_db_valid_to(self):
         db_valid_to = self.get_db_valid_to_from_txt()
-        if db_valid_to is None:
-            db_valid_to = self.get_db_valid_to_from_sql()
         return db_valid_to
 
 
@@ -462,18 +471,44 @@ class CurrencyConverter():
                                                utc_now=utc_now)
                                                for site in self.sites]
         update_needed, latest_updates = zip(*update_need_and_time)
-        prinf('update needed in sites:\n%s\nlatest_update dates:\n%s', update_needed, latest_updates )
+        prinf('update needed in sites:\n%s\nlatest_update dates:\n%s', update_needed, latest_updates)
         return update_needed, latest_updates
 
     def update_rates_data_from_web(self, sites=None):
         # need to get data from the internet
-        self.request_sites_from_net(sites)
+        responded = self.request_sites_from_net(sites)
+        if not responded:
+            prinw('Not even one cconversion site responded - possible internet connection problem!')
+            return
+
+        # only the most fresh site continues
+        if type(sites) == list and len(sites) > 1:
+            sites_valid_from = {site: site.valid_from_utc for site in sites
+                                if site.responded is not None}
+            latest_valid_from_utc = max(sites_valid_from.values())
+            latest_site = [site for site, valid_from_utc
+                           in sites_valid_from
+                           if valid_from_utc == latest_valid_from_utc]
+            sites = latest_site
+            prinf('%s is the most fresh site', latest_site.name)
+
         self.sites_to_pandas(sites)
         # store them to database
         if self.use_sql:
             self.save_to_sql()
         else:
             prinw('Not using offline sql database!')
+
+    def internet_on(self):
+        try:
+            # connect to the host -- tells us if the host is actually reachable
+            self._start_()
+            socket.create_connection(("www.google.com", 80), timeout=1)
+            self._end_('connection to internet is available')
+            return True
+        except OSError:
+            pass
+        return False
 
     def update_rates_data(self):
         db_valid_to = self.get_db_valid_to()
@@ -565,5 +600,5 @@ if __name__ == '__main__':
    use_redis = False # on windows - 1 sec time penalty on first contact
    cc = CurrencyConverter(*params, use_redis=use_redis)
    cc.convert()
-   prinf('%s complete code sec', time.time() - start_time)
+   prinf('%s ms - complete code', round((time.time() - start_time)*1000, 2))
    # ~ 44 ms on windows w/o redis

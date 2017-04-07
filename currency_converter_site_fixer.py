@@ -27,6 +27,10 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         self.valid_from_utc = None
         self.valid_to_utc = None
 
+        self.timeout = 1  # url response timeout in seconds
+        self.in_ccode = None
+        self.responded = False
+
     def create_url(self):
         self.base_url = self.base + self.strs[jpn.path_latest]
 
@@ -58,8 +62,8 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         # = valid for one day
         return utc.shift(days=+1, seconds=-1)
 
-    def latest_rates_update(self, utc_now=None):
-        return self.__class__.latest_rates_update(utc_now=utc_now)
+#    def latest_rates_update(self, utc_now=None):
+#        return self.__class__.latest_rates_update(utc_now=utc_now)
 
     @classmethod
     def latest_rates_update(cls, utc_now=None):
@@ -89,21 +93,29 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
             return True, latest_rates_update
 
 
-    def start(self):
-        self.start_time = time.time()
-    def end(self):
-        prinf('%s sec', time.time() - self.start_time)
+    def _start_(self):
+        self._start_time_ = time.time()
+
+    def _end_(self, text=''):
+        end_time = time.time() - self._start_time_
+        prinf('%s ms %s', round(end_time*1000,2), text)
+        return end_time
 
     def get_response(self):
+        self.responded = False
         prinf('%s params: %s', self.base_url, self.my_params)
-        self.start()
-        self.response = requests.get(self.base_url, params=self.my_params)
-        self.end()
+        self._start_()
+        try:
+            self.response = requests.get(self.base_url, params=self.my_params, timeout=self.timeout)
+        except OSError:
+            prinw('%s host not available', self.name)
+            self.response = None
+        self._end_('request responded')
 
         if not self.response:
-            prinf(self.response)
             return None
         else:
+            prinf(self.response.status_code)
             if self.response.status_code > 400 :
                 prinw('%s currency converter site response not found. %s', self.name, self.response.status_code)
                 return None
@@ -115,6 +127,12 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
 
         self.rates = self.response.json()[self.strs[jpn.key_output]]
         self.rates.update({self.in_ccode: float(1)})
+        self.responded = True
+
+    def get_all_rates(self):
+        self.create_url()
+        response = self.get_response()
+        return self.responded
 
     def get_this_rate_for_ccode(self, in_ccode, out_ccode, start_params={}):
         self.my_params = start_params
@@ -126,8 +144,4 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         self.my_params = start_params
         self.create_url()
         self.update_params(in_ccode=in_ccode)
-        self.get_response()
-
-    def get_all_rates(self):
-        self.create_url()
         self.get_response()
