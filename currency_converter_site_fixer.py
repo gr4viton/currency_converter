@@ -88,19 +88,18 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
 
         return update_time
 
-    @classmethod
-    def new_rates_available(cls, utc_db_valid_to, utc_now=None):
-        latest_rates_update = cls.latest_rates_update(utc_now)
-        prinf('%s site', cls.name)
-        prinf('%s latest_rates_update', latest_rates_update)
-        prinf('%s db_valid_to', utc_db_valid_to)
-        if latest_rates_update <= utc_db_valid_to:
-            # old data are latest - no new request needed
-            return False, latest_rates_update
-        else:
-            # new rates available
-            return True, latest_rates_update
+    def latest_rates_update(self, utc_now=None):
+        self.last_updated = self.__class__.latest_rates_update(utc_now)
 
+    def new_rates_available(self, utc_db_valid_from, utc_now=None):
+        self.last_updated = self.__class__.latest_rates_update(utc_now)
+        self.update_needed = self.latest_rates_update > utc_db_valid_from
+        # False: current database data are latest - no new request needed
+        # True: this site has more fresh data
+
+        prinf('%s site', self.name)
+        prinf('%s latest_rates_update', self.latest_rates_update)
+        prinf('%s db_valid_to', utc_db_valid_to)
 
     def _start_(self):
         self._start_time_ = time.time()

@@ -41,6 +41,7 @@ pd.options.display.max_rows = 20
 
 global DEBUG
 DEBUG = ''  # 'simulate_time,'
+DEBUG = 'simulate_time,'
 
 #TODO
 # [] one commit - in master branch - multiple in other branches
@@ -153,54 +154,11 @@ class CurrencyConverter():
             self._end_('redisworks root initialized')
             prinf('Redis works root server running.')
 
-    def query_db(self, query, args=(), one=False):
-        cur = self._get_db_().execute(query, args)
-        rv = cur.fetchall()
-        cur.close()
-        return (rv[0] if rv else None) if one else rv
-
-    def _get_db_(self):
-        if self.db is None:
-            self._db_connect_()
-        return self.db
-
-    def _db_connect_(self):
-        self.db = sqlite3.connect(self.db_file)
-
-    def request_sites_from_net(self, sites=None):
-        if sites is None:
-            sites = self.sites
-        elif type(sites) is not list:
-            sites = [sites]
-
-        no_response_count = 0
-        responded_count = 0
-        if len(sites) > 1:
-            no_response_trigger = self.no_response_trigger
-            for site in sites:
-                response = site.get_all_rates()
-                if not response:
-                    no_response_count += 1
-                else:
-                    responded_count += 1
-                if responded_count == 0 and no_response_count > no_response_trigger :
-                    # when at least <no_response_trigger> count sites don't respond
-                    # - trigger internet connection detection
-                    if not self.internet_on():
-                        return False
-                    else:
-                        # if the internet is connected - add up <no_response_trigger>
-                        no_response_trigger += self.no_response_trigger
-        else:
-            # not useful to try connection to internet (~60ms)
-            # if only one cconvertion site is available
-            if sites[0].get_all_rates():
-                responded_count = 1
-
-        at_least_one_site_responded = responded_count > 0
-        return at_least_one_site_responded
-
     def _load_sites_from_pickle_(self):
+        """Loads exchange rates pandas DataFrame from local pickle
+
+        if it does not exist - get the data from
+        """
         if Path(self._sites_file_).is_file():
             with open(self._sites_file_, 'rb') as input:
                 self.sites = pickle.load(input)
@@ -214,44 +172,31 @@ class CurrencyConverter():
                 pickle.dump(self.sites, output, pickle.HIGHEST_PROTOCOL)
             prinf('%s saved', self._sites_file_)
 
-    def sites_to_pandas(self, sites=None, latest=None):
+    def create_rates_table_in_pandas(self, sites=None):
         # take rates data from the most recent site
-        if sites is None:
-            sites = self.sites
-        elif type(sites) is not list:
-            sites = [sites]
+        site = get_latest_site(sites)
 
-        if latest:
-            latest_updates = [site.valid_from_utc for site in sites]
-            if len(latest_updates) > 1:
-                # more sites - get the latest update
-                _, idx = max(latest_updates)
-                #prinf(index)
-            else:
-                idx = 0
+        base = site.in_ccode
+        ccodes_rates = [(key, site.rates[key]) for key in sorted(site.rates.keys())]
+        ccodes, rates = zip(*ccodes_rates)
 
-            sites = [self.sites[idx]]
+        df = pd.DataFrame({base : rates})
+        #df[base] = rates
+        df.index = ccodes
 
-        for site in sites:
-            base = site.in_ccode
-            ccodes_rates = [(key, site.rates[key]) for key in sorted(site.rates.keys())]
-            ccodes, rates = zip(*ccodes_rates)
+        # calculate other values from base column - do not round digits
+        for col_ccode in ccodes:
+            if col_ccode != base:
+                col = [df[base].loc[row_ccode] / df[base].loc[col_ccode] for row_ccode in ccodes]
+                col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], 4) for row_ccode in ccodes]
+                df[col_ccode] = col
 
-            df = pd.DataFrame({base : rates})
-            #df[base] = rates
-            df.index = ccodes
+        self.rates_df = df
 
-            # calculate other values from base column - do not round digits
-            for col_ccode in ccodes:
-                if col_ccode != base:
-                    col = [df[base].loc[row_ccode] / df[base].loc[col_ccode] for row_ccode in ccodes]
-                    col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], 4) for row_ccode in ccodes]
-                    df[col_ccode] = col
+        self.rates_info_lines = '\n'.join([str(i) for i in [site.valid_from_utc, site.valid_to_utc,
+                                                            site.name, base]])
 
-            self.rates_df = df
-
-            self.rates_info_lines = '\n'.join([str(i) for i in [site.valid_from_utc, site.valid_to_utc,
-                                                                site.name, base]])
+        return self.rates_df, self.rates_info_lines
 
     def save_to_sql(self):
         self.create_engine()
@@ -284,13 +229,18 @@ class CurrencyConverter():
     def db_file_exist(self):
         return Path(self.db_file).is_file()
 
-    def sql_to_pandas(self, in_ccode=None, out_ccode=None):
+    def get_rates_from_sql(self, in_ccode=None, out_ccode=None):
+        """Queries the sql database for input rates according to input arguments [in_ccode, out_ccode]
+
+        - on no rates table or no sql database it returns None
+        - when both arguments are None, returns the full database
+        - when out_ccode is None, returns the [in_ccode] rates column
+        - otherwise returns the exchange rate for the arguments
+        """
         if self.db_file_exist():
             self.create_engine()
-
             rates_table_exist = self.engine.dialect.has_table(self.engine, self.rates_table_name)
             if rates_table_exist:
-
                 if not (in_ccode or out_ccode):
                     self._start_()
                     # load whole database to pandas (time consuming)
@@ -299,7 +249,6 @@ class CurrencyConverter():
 
                     rates_df.index = rates_df['index']
                     rate = rates_df[self.in_code].loc[self.out_code]
-
                     return rate
 
                 elif in_ccode:
@@ -307,40 +256,25 @@ class CurrencyConverter():
                     self._start_()
                     in_col_df = pd.read_sql_query(sql_query, self.engine)
                     self._end_('loaded query read_sql_query')
-
                     if out_ccode:
                         in_col_df.index = in_col_df['index']
                         rate = in_col_df[in_ccode].loc[out_ccode]
-
                         return rate
                     else:
                         rates = {ccode: float(rate) for ccode, rate
                                                     in zip(in_col_df['index'], in_col_df[in_ccode])}
                         return rates
-
-
-    def get_db_valid_to_from_txt(self):
-        # database rates exist - so rates_info_txt should exist too
-        # not use database for loading rates_info_table_exist = use file - faster access
-        rates_info_txt_exist = Path(self.rates_info_txt_file).is_file()
-        if rates_info_txt_exist:
-            self._start_()
-            with open(self.rates_info_txt_file, 'r', encoding=self.encoding) as f:
-                whole = f.readlines()
-                if len(whole) < 2:
-                    prinw('rates_info_txt_file does not contain lines with db_valid_to_str, db_valid_from_str!')
-                    return None
-                else:
-                    db_valid_to_str, db_valid_from_str = whole[0:2]
-                    db_valid_to = arrow.get(db_valid_to_str)
-
-            self._end_('loaded rates_info_txt_file') # ~ 8 ms
-            return db_valid_to
+            else:
+                return None
         else:
-            prinw('rates_info_txt_file does not exist')
             return None
 
     def touch_db_file(self):
+        """Tries to create empty database file at the desired location
+
+        if unsuccessfully it disables sql database usage
+        - the exchange rates from cc-sites will not be stored
+        """
         if not self.db_file_exist():
             # create empty database file
             open(self.db_file, 'a').close()
@@ -352,59 +286,6 @@ class CurrencyConverter():
                   , str(Path(self.db_file)))
             self.use_sql = False
             return None
-
-    def get_db_valid_to(self):
-        db_valid_to = self.get_db_valid_to_from_txt()
-        return db_valid_to
-
-
-    def get_utc_now(self):
-        global DEBUG
-        # simulating different time
-        utc_now = arrow.utcnow()
-        prinf('%s utc_now', utc_now)
-        if 'simulate_time' in DEBUG:
-            utc_now = utc_now.shift(days=+12, hours=+4)
-            prinf('%s simulated utc_now', utc_now)
-        return utc_now
-
-    def get_sites_states(self, db_valid_to):
-        utc_now = self.get_utc_now()
-        # which sites can give us later rates then the ones saved in database
-        update_need_and_time = [
-            site.__class__.new_rates_available(utc_db_valid_to=db_valid_to,
-                                               utc_now=utc_now)
-                                               for site in self.sites]
-        update_needed, latest_updates = zip(*update_need_and_time)
-        prinf('update needed in sites:\n%s\nlatest_update dates:\n%s', update_needed, latest_updates)
-        return update_needed, latest_updates
-
-    def update_rates_data_from_web(self, sites=None):
-        """
-        """
-        # need to get data from the internet
-        responded = self.request_sites_from_net(sites)
-        if not responded:
-            prinw('Not even one cconversion site responded - possible internet connection problem!')
-            return
-
-        # only the most fresh site continues
-        if type(sites) == list and len(sites) > 1:
-            sites_valid_from = {site: site.valid_from_utc for site in sites
-                                if site.responded is not None}
-            latest_valid_from_utc = max(sites_valid_from.values())
-            latest_site = [site for site, valid_from_utc
-                           in sites_valid_from
-                           if valid_from_utc == latest_valid_from_utc]
-            sites = latest_site
-            prinf('%s is the most fresh site', latest_site.name)
-
-        self.sites_to_pandas(sites)
-        # store them to database
-        if self.use_sql:
-            self.save_to_sql()
-        else:
-            prinw('Not using offline sql database!')
 
     def internet_on(self):
         """Tries to reach google.com to find out if the connection to internet is established
@@ -421,24 +302,207 @@ class CurrencyConverter():
             pass
         return False
 
-    def update_rates_data(self):
+    def get_db_valid_from(self):
+        """Returns offline sql database valid_from utc time
+
+        was usefull when the valid_to was stored in multiple sources, it returned the first found entry
+        - txt file - now default
+        - sql database - obsolete - too slow access
+        - redis database - possible in future releases
+        """
+        db_valid_from = self.get_db_valid_from_via_txt()
+        return db_valid_from
+
+    def get_db_valid_from_via_txt(self):
+        """Returns offline sql database valid_from utc time from txt file [rates_info_txt_file]"""
+        rates_info_txt_exist = Path(self.rates_info_txt_file).is_file()
+        if rates_info_txt_exist:
+            self._start_()
+            with open(self.rates_info_txt_file, 'r', encoding=self.encoding) as f:
+                whole = f.readlines()
+                if len(whole) < 2:
+                    prinw('rates_info_txt_file does not contain lines with db_valid_to_str, db_valid_from_str!')
+                    return None
+                else:
+                    db_valid_to_str, db_valid_from_str = whole[0:2]
+                    db_valid_from = arrow.get(db_valid_from_str)
+                    #db_valid_to = arrow.get(db_valid_to_str)
+
+            self._end_('loaded rates_info_txt_file') # ~ 8 ms
+            return db_valid_from
+        else:
+            prinw('rates_info_txt_file does not exist')
+            return None
+
+
+    def get_utc_now(self):
+        """Returns current UTC time
+
+        if global DEBUG variable contains 'simulate_time', the time will be shifted 12 days to the future
+        for the offline database update triggering
+        """
+        global DEBUG
+        # simulating different time
+        utc_now = arrow.utcnow()
+        prinf('%s utc_now', utc_now)
+        if 'simulate_time' in DEBUG:
+            utc_now = utc_now.shift(days=+12, hours=+4)
+            prinf('%s simulated utc_now', utc_now)
+        return utc_now
+
+
+    def sites_update_new_rates_availability(self):
+        """Updates [latest_updated] date and [update_needed] for all cc-sites
+
+        - according to [utc_now] and database [valid_from] date
+        """
+        utc_now = self.get_utc_now()
+        utc_db_valid_from = self.get_db_valid_from()
+        [site.new_rates_available(utc_db_valid_from, utc_now) for site in self.sites]
+
+    def sites_update_last_updated(self):
+        """Updates [latest_updated] date for all cc-sites
+
+        - according to [utc_now]
+        """
+        utc_now = self.get_utc_now()
+        [site.latest_rates_update(utc_now) for site in self.sites]
+
+    def get_latest_site(self, update_needed=False):
+        """Finds out which cc-site can give us the most fresh rates
+
+        returns None if none of the cc-sites has more fresh rates data if [update_needed] is True
+        """
+        if update_needed:
+            self.update_new_rates_availability()
+            latest_update_times = [site.last_updated for site in self.sites if site.update_needed]
+        else:
+            self.sites_update_last_updated()
+            latest_update_times = [site.last_updated for site in self.sites ]
+        if len(latest_update_times) > 0:
+            _, idx = max(latest_update_times)
+            freshest = self.sites[idx]
+            prinf('%s is the most fresh site', freshest.name)
+            return freshest
+        else:
+            return None
+
+    def get_latest_site_than_database(self):
+        """Finds out which cc-site can give us the most fresh rates
+
+        returns None if none of the cc-sites has more fresh rates data
+        """
+        return get_latest_site(update_needed=True)
+
+    def get_latest_site_from_now(self):
+        return get_latest_site(update_needed=False)
+
+    def request_sites_from_net(self, sites=None):
+        """Gets all successfulness of cc-sites responses (get_all_rates) = True / False
+
+        - counts unsuccessful atempts into [no_response_count]
+        -- triggers internet connection detection [internet_on] when past [no_response_trigger]
+        - does not store the returns as they are stored in individual cc-sites class instances [site.rates]
+        return True on at least one successfull cc-site response, False otherwise
+        """
+        if sites is None:
+            sites = self.sites
+
+        no_response_count = 0
+        responded_count = 0
+        if type(sites) is list and len(sites) > 1:
+            no_response_trigger = self.no_response_trigger
+            for site in sites:
+                success = site.get_all_rates()
+                if not success:
+                    no_response_count += 1
+                else:
+                    responded_count += 1
+                if responded_count == 0 and no_response_count > no_response_trigger :
+                    # when at least <no_response_trigger> count sites don't respond
+                    # - trigger internet connection detection
+                    if not self.internet_on():
+                        return False
+                    else:
+                        # if the internet is connected - add up <no_response_trigger>
+                        no_response_trigger += self.no_response_trigger
+        else:
+            # not useful to try connection to internet (~60ms)
+            # if only one cconvertion site is available
+            if sites[0].get_all_rates():
+                responded_count = 1
+
+        at_least_one_site_responded = responded_count > 0
+        return at_least_one_site_responded
+
+    def update_rates_data_from_web(self, site):
+        """
+
+        - if more sites are passed as argument [sites]
+        -- selects the site with the latest update from them all
+        """
+        # need to get data from the internet
+        responded = self.request_sites_from_net(sites)
+        if not responded:
+            prinw('Not even one cconversion site responded - possible internet connection problem!')
+            return
+        else:
+            sites = [site for site in sites if site.responded]
+
+        # only the most fresh site continues
+        site = self.get_latest_site_than_database(sites)
+
+        self.create_rates_table_in_pandas(site)
+        # store them to database
+        if self.use_sql:
+            self.save_to_sql()
+        else:
+            prinw('Not using offline sql database!')
+
+
+    def update_rates_data_if_needed(self):
         """Collect the latest rates from internet if the offline database is outdated
 
-        - get database data valid to utc time (db_valid_to)
+        if database
+        - get database valid_from time (db_valid_from)
+        - get sites latest_updated times
+        - get sites update_needed
+        - sort update_needed sites according to last_updated
+        - try with the latest site
+
+            -- connect and
+            update database
+        -- if not try with another !!
+        -- if no response - error
+
+        if not database
+        -get sites latest_updated times
+        - sort update_needed sites according to last_updated
+        - try with the latest site
+
+            -- connect and
+            update database
+        -- if not try with another !!
+        -- if no response - error
+
         - find out if any cconversion site has more fresh data (get_sites_states)
         - gets the most fresh site and update the offline database (update_rates_data_from_web)
+
         """
-        db_valid_to = self.get_db_valid_to()
-        if db_valid_to is None:
+
+
+        db_valid_from = self.get_db_valid_from()
+        if db_valid_from is None:
+            # no database rates
+            latest_site = self.get_latest_site_from_now()
             self.update_rates_data_from_web()
         else:
-            update_needed, latest_updates = self.get_sites_states(db_valid_to)
+
 
             if any(update_needed):
                 if len(latest_updates) > 1:
                     # more sites - get the latest update
                     _, idx = max(latest_updates)
-                    prinf(idx)
                 else:
                     idx = 0
 
@@ -469,6 +533,7 @@ class CurrencyConverter():
         input_cur <str> - Input currency - 3 letters name or currency symbol
         [output_cur <str>] - Output currency - 3 letters name or currency symbol
                            - if omitted - amount converted to all availible currencies
+        exchange rates are acquired from sql database (get_rates_from_sql)
         """
         self.in_amount = amount
         self.in_currency = input_cur
@@ -484,7 +549,7 @@ class CurrencyConverter():
         if self.in_code == self.out_code:
             self.out_amount = self.in_amount
         else:
-            rates = self.sql_to_pandas(self.in_code, self.out_code)
+            rates = self.get_rates_from_sql(self.in_code, self.out_code)
 
             prinf('rate = %s', rates)
             if type(rates) is not dict:
@@ -552,7 +617,7 @@ if __name__ == '__main__':
 
     # main code
     cc = CurrencyConverter(use_redis=use_redis)
-    cc.update_rates_data()
+    cc.update_rates_data_if_needed()
     cc.convert(*params)
 
     prinf('%s ms - complete code', round((time.time() - start_time)*1000, 2))
