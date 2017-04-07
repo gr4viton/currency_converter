@@ -1,31 +1,32 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# task assignment here:
-# https://gist.github.com/MichalCab/3c94130adf9ec0c486dfca8d0f01d794
+"""
+Project:    Currency converter
+Assignment: https://gist.github.com/MichalCab/3c94130adf9ec0c486dfca8d0f01d794
+Author:     Daniel Davídek @ gr4viton.cz
+Originated: 03-04-2017
+License:    GPLv3 @ http://www.gnu.org/licenses/gpl-3.0.html
 
-import socket  # internet connection detection
-
-import redis
-from redisworks import Root
-# import hiredis # would be faster..
+Disclaimer: I apologize for the "long" code.
+            I tried to create it universally with modularity in mind
+"""
 
 import requests
 import json
-#import BeautifulSoup
-import platform
+import pandas as pd
+from sqlalchemy import create_engine
+import redis
+from redisworks import Root
+
+import argparse  # better than getopt
+import arrow  # better than time
+import pickle  # for dev only (_load_sites_from_pickle_)
 
 import sys
-import argparse
-import time
-
-import arrow # better then time
-from sqlalchemy import create_engine
-#from sqlalchemy.orm import sessionmaker
-
-
-import pickle  # for dev only
-from pathlib import Path
-
+import time  # time interval measurement
+import platform  # windows detection
+import socket  # internet connection detection
+from pathlib import Path  # file creation detection
 import logging
 
 from logging import info as prinf
@@ -33,15 +34,13 @@ from logging import debug as prind
 from logging import warning as prinw
 from logging import error as prine
 
-import pandas as pd
-pd.options.display.max_rows = 20
-
 #logging.basicConfig(filename='run.log', filemode='w', level=logging.DEBUG)
 logging.basicConfig(level=logging.DEBUG)
 #logging.basicConfig(level=logging.WARNING
+pd.options.display.max_rows = 20
+
 global DEBUG
-DEBUG = ''
-#DEBUG = 'simulate_time'
+DEBUG = ''  # 'simulate_time,'
 
 #TODO
 # [] one commit - in master branch - multiple in other branches
@@ -52,95 +51,29 @@ DEBUG = ''
 # [] commit to master
 
 
-### OUTPUT
-# - json with following structure:
-#```
-# {
-#    "input": {
-#         "amount": <float>,
-#         "currency": <3 letter currency code>
-#     }
-#     "output": {
-#         <3 letter currency code>: <float>
-#     }
-# }
-# ```
-
-
-
-### Featuring
-# - smart internet connection and currency conversion sites response detection
-# -- currency conversion sites implemented: fixer.io
-# - offline currencies database
-# -- automatic offline database update on detection of new rates update from any implemented site
-# --- data_valid_utc is stored separately in txt file - faster then another sql database query
-# - time effective conversion
-# -- tested on windows 64
-# --- w/o update offline database triggered : ~ 50 ms
-# --- else : ~ 1200ms
-# - standard logger for logging
-# - argparser for input argument parsing - help string autogeneration
-# - manually tested
-# -- 3 types input arguments from assignment <https://gist.github.com/MichalCab/3c94130adf9ec0c486dfca8d0f01d794>
-# -- another common currency symbols - Kč, $, CNY-symbol, GBP-symbol, EUR-symbol
-# - used modules:
-# -- pandas, sqlalchemy, redis, redisworks, requests, json
-# -- arrow, argparse
-# -- platform, socket, sys, time, pathlib, logging, pickle
-# - using decorators: staticmethod, classmethod
-
-
-
-### Disclaimer
-#### Not using these controversial tricks to get lower latency
-##### [x] Immediate exchange rate json output after reading (from sql/redis)
-#  - implemented style: First the program tries to find out if the database should be updated
-#  - not implemented: First run the program returns json data from offline database
-#   -- even if in second thread updating the database afterwards
-#   -- user gets better response time, but the first time he calls, he can get outdated rates
-#    --- we certainly don't want that on the first start after a long time (olddated sql database)
-#    --- it can be implemented w/o further ado, but only if the server with redis is updated frequently
-
-#### Not implemented (yet) - future releases maybe
-# - full redis support for rates
-# -- expire time - to the known time of next update from any implemented site
-# - currency conversion rates from multiple sources in the offline database
-# -- e.g. if CZK is not in the selected most fresh currency converter site - it will not be converted to/from
-# - multithreading - load from database at start in different thread - use the data or not later
-# -- after finding the offline data are not fresh enough
-# - automatic database update as a background service
-# -- would update sql database and redis automatically not needed to check every time the convert is triggered
-# - automatic testing via asserts and node2 module
-# - user input error autocorrection
-# -- suggestion of the textually nearest currency
-# -- another program argument for automatic nearest suggestion conversion
-# -- localisation of output / logger texts into other languages
-# - modules to possibly use:
-# -- hiredis - can be 10 times faster on windows..
-# -- BeautifulSoup - for automatic currency symbol to currency code conversion from site <http://www.xe.com/symbols.php>
-
 from parameter_names_enums import JsonParameterNames as jpn
 
-from currency_converter_site import CurrencyConverterSite
-from currency_converter_site_fixer import CurrencyConverterSiteFixer
 from currency_symbol_converter import CurrencySymbolConverter
-#class CurrencyConverterSiteApilayer(CurrencyConverterSite):
 
-
-
-
+#from currency_converter_site import CurrencyConverterSite
+from currency_converter_site_fixer import CurrencyConverterSiteFixer as CCS_Fixer
+from currency_converter_site_apilayer import CurrencyConverterSiteApilayer as CCS_Apilayer
 
 class CurrencyConverter():
+    """Takes care of all the currency conversion bussiness:
 
+    - currency conversion sites communication (through implemented classes)
+    - currency symbols to 3 letter currency codes conversion
+    - sql and redis rates database update and creation
+    """
     strs = {jpn.key_input: 'input',
             jpn.key_in_amount: 'amount',
             jpn.key_in_ccode: 'currency',
             jpn.key_output: 'output'}
 
-    def __init__(self, use_redis):
-
-        self.sites_file = 'sites.pickle'
-
+    def __init__(self, use_redis, ccs_sites_list=[]):
+        """Calls indiviual initialization methods"""
+        self._sites_file_ = 'sites.pickle'  # for development only
         self.in_amount = None
         self.in_currency = None
         self.in_code = None
@@ -148,62 +81,70 @@ class CurrencyConverter():
         self.out_currency = None
         self.out_amount = None
         self.out_code = None
-        self.out_digits = 2
+        self.out_digits = 2  # assignment specific choice
 
-        self.init_sql()
-        self.init_txt()
+        self._init_sql_()
+        self._init_txt_()
+        self._init_redis_(use_redis)
+        self._init_csc_()
+        self._init_cc_sites_(ccs_sites_list)
 
-        self.init_redis(use_redis)
-
-        self.init_csc()
-
-        self.init_cc_sites()
-        self.update_rates_data()
-
-    def init_sql(self):
+    def _init_sql_(self):
+        """Initialize offline sql disk database variables"""
         self.use_sql = True
         self.db_engine_path = 'sqlite:///db\\exchange_rates.db'
         self.db_file = 'db/exchange_rates.db'
         self.rates_table_name = 'rates'
         self.engine = None
 
-    def init_txt(self):
+    def _init_txt_(self):
+        """Initialize txt file for database valid_to date storing"""
         self.rates_info_txt_file = 'db/rates_info.nfo'
         self.encoding = 'utf-8'
 
-    def init_csc(self):
+    def _init_csc_(self):
+        """Initialize currency symbol converter with redis variable"""
         self.csc = CurrencySymbolConverter(self.r)
 
-    def init_redis(self, use_redis):
-        self.use_redis = use_redis
-        # WINDOWS NOTE
-        # the first access to redis has about 1 second time penalty on windows platform. idiocracy
-        self.first_contact_max_sec = 20.5
+    def _init_cc_sites_(self, ccs_sites_list):
+        """Initialize currency conversion sites"""
+        self.sites = [
+            CCS_Fixer(),
+            #CCS_Apilayer(),
+        ]
+        self.sites.extend(ccs_sites_list)
+        # when using more cconverter sites - it can happen that some of them do not respond
+        # if more then <no_response_trigger> sites do not respond - it will trigger internet_on() detection
+        self.no_response_trigger = 3
 
+    def _init_redis_(self, use_redis):
+        """Initialize redis variables and connections
+
+        - even if use_redis is True, the first_contact_max_sec test is still used
+        ::WINDOWS NOTE::
+        the first access to redis has about 1 second time penalty on windows platform. idiocracy
+        """
+        self.use_redis = use_redis
+        self.first_contact_max_sec = 2.5  # should be at most 300 ms to be better than hdd sql database
         self.redis_host = 'localhost'
         self.redis_port = 6379
-
         self.r = None
-
         if not self.use_redis:
             return
 
         self._start_()
         redis_db = redis.StrictRedis(host="localhost", port=6379, db=0)
         self._end_('redis strictRedis initialized')
-
         self._start_()
-        redis_db.set('redis', 'running')
-        first_contact = self._end_('first redis access') # ~ 1000 ms on windows
-
+        redis_db.set('redis', 'running')  # takes ~ 1000 ms on windows
+        first_contact = self._end_('first redis access')
         self._start_()
-        redis_running = redis_db.get('redis') == 'running'
-        self._end_('second redis access') # ~ 0 ms on windows
-
+        redis_running = redis_db.get('redis') == 'running'  # takes ~ 0.1 ms on windows
+        self._end_('second redis access')
         redis_running = redis_db.info()['loading'] == 0
 
         if first_contact > self.first_contact_max_sec:
-            # we don't want the redis to actually slow things down
+            # we don't want the redis to actually slow things down on Windows
             redis_running = False
 
         if redis_running:
@@ -211,51 +152,6 @@ class CurrencyConverter():
             self.r = Root(host="localhost", port=6379, db=0)
             self._end_('redisworks root initialized')
             prinf('Redis works root server running.')
-
-    def init_cc_sites(self):
-        self.sites = []
-        self.init_curconv_site_fixer()
-
-        # when using more cconverter sites - it can happen that some of them do not respond
-        # if more then <no_response_trigger> sites do not respond - it will trigger internet_on() detection
-        self.no_response_trigger = 3
-
-    def init_curconv_site_fixer(self):
-
-        fixer_strs = {
-            jpn.key_output: 'rates',
-            jpn.key_in_ccode: 'base',
-            jpn.var_in_ccode: 'base',
-            jpn.var_out_ccode: 'symbols',
-            jpn.path_latest: 'latest',
-            jpn.key_date: 'date',
-            jpn.key_date_format: 'YYYY-MM-DD',
-        }
-
-        # The rates are updated daily around 4PM CET.
-        fixer = CurrencyConverterSiteFixer('fixer',
-                                           base='http://api.fixer.io/',
-                                           strs=fixer_strs
-                                           )
-        self.sites.append(fixer)
-
-
-    def init_curconv_site_apilayer(self):
-
-        apilayer_strs = {
-            jpn.key_output: 'rate',
-            jpn.var_in_ccode: 'from',
-            jpn.var_out_ccode: 'to',
-            jpn.path_latest: 'historical',
-            jpn.var_date: 'date',
-            jpn.var_date_format: 'YYYY-MM-DD',
-            jpn.var_apikey: 'access_key',
-            jpn.free_apikey: 'f97e97072345994b708fb559a09788a5',
-        }
-        apilayer = CurrencyConverterSite('apilayer',
-                                          base='http://www.apilayer.net/api/',
-                                          strs=apilayer_strs )
-        self.site_list += [apilayer]
 
     def query_db(self, query, args=(), one=False):
         cur = self._get_db_().execute(query, args)
@@ -305,18 +201,18 @@ class CurrencyConverter():
         return at_least_one_site_responded
 
     def _load_sites_from_pickle_(self):
-        if Path(self.sites_file).is_file():
-            with open(self.sites_file, 'rb') as input:
+        if Path(self._sites_file_).is_file():
+            with open(self._sites_file_, 'rb') as input:
                 self.sites = pickle.load(input)
-            prinf('%s loaded', self.sites_file)
+            prinf('%s loaded', self._sites_file_)
             prinf(self.sites)
         else:
             self.request_sites_from_net()
 
             prinf(self.sites)
-            with open(self.sites_file, 'wb') as output:
+            with open(self._sites_file_, 'wb') as output:
                 pickle.dump(self.sites, output, pickle.HIGHEST_PROTOCOL)
-            prinf('%s saved', self.sites_file)
+            prinf('%s saved', self._sites_file_)
 
     def sites_to_pandas(self, sites=None, latest=None):
         # take rates data from the most recent site
@@ -484,6 +380,8 @@ class CurrencyConverter():
         return update_needed, latest_updates
 
     def update_rates_data_from_web(self, sites=None):
+        """
+        """
         # need to get data from the internet
         responded = self.request_sites_from_net(sites)
         if not responded:
@@ -509,8 +407,12 @@ class CurrencyConverter():
             prinw('Not using offline sql database!')
 
     def internet_on(self):
+        """Tries to reach google.com to find out if the connection to internet is established
+
+        returns True on conected to internet False otherwise
+        """
         try:
-            # connect to the host -- tells us if the host is actually reachable
+            # connect to the google.com -- tells us if the host is actually reachable
             self._start_()
             socket.create_connection(("www.google.com", 80), timeout=1)
             self._end_('connection to internet is available')
@@ -520,6 +422,12 @@ class CurrencyConverter():
         return False
 
     def update_rates_data(self):
+        """Collect the latest rates from internet if the offline database is outdated
+
+        - get database data valid to utc time (db_valid_to)
+        - find out if any cconversion site has more fresh data (get_sites_states)
+        - gets the most fresh site and update the offline database (update_rates_data_from_web)
+        """
         db_valid_to = self.get_db_valid_to()
         if db_valid_to is None:
             self.update_rates_data_from_web()
@@ -538,6 +446,11 @@ class CurrencyConverter():
                 self.update_rates_data_from_web(actual_site)
 
     def convert_to_ccode(self):
+        """Converts in_code and out_code to ccode
+
+        ccode = 3 letter currency code
+        if the conversion fails the program is ended with
+        """
         self.in_code = self.csc.get_currency_code(self.in_currency)
         if self.in_code is None:
             # suggest the nearest textually?
@@ -547,12 +460,15 @@ class CurrencyConverter():
             self.out_code = self.csc.get_currency_code(self.out_currency)
             if self.out_code is None:
                 # suggest the nearest textually?
-                sys.exit(2)
+                sys.exit(3)
 
     def convert(self, amount, input_cur, output_cur=None):
-        """ Converts amount of money in <input_cur> currency to <output_cur> currency
-        amount <float> - Money amount to be converted
-        input
+        """Converts amount of money in <input_cur> currency to <output_cur> currency
+
+        amount <float> - Amount which we want to convert
+        input_cur <str> - Input currency - 3 letters name or currency symbol
+        [output_cur <str>] - Output currency - 3 letters name or currency symbol
+                           - if omitted - amount converted to all availible currencies
         """
         self.in_amount = amount
         self.in_currency = input_cur
@@ -580,6 +496,7 @@ class CurrencyConverter():
                 self.print_json(rates_dict=rates)
 
     def print_json(self, rates_dict=None):
+        """Sends json formatted conversion output in assignment format manner"""
         if not rates_dict:
             rates_dict = {self.out_code: float(self.out_amount)}
         self.out_dict = {self.strs[jpn.key_input]: {self.strs[jpn.key_in_amount]: float(self.in_amount),
@@ -591,7 +508,8 @@ class CurrencyConverter():
 
 
 def parse_arguments():
-    """ Parses program arguments
+    """Parses program arguments
+
     --amount - amount which we want to convert - float
     --input_currency - input currency - 3 letters name or currency symbol
     --output_currency - requested/output currency - 3 letters name or currency symbol
@@ -613,7 +531,7 @@ def parse_arguments():
     return amount, input_cur, output_cur
 
 if __name__ == '__main__':
-    """ Converts amount of currency according to program arguments
+    """Converts amount of currency according to program arguments
     - Program arguments parsing
     - Redis usage decision
     - CurrencyConverter initializaton
@@ -634,6 +552,7 @@ if __name__ == '__main__':
 
     # main code
     cc = CurrencyConverter(use_redis=use_redis)
+    cc.update_rates_data()
     cc.convert(*params)
 
     prinf('%s ms - complete code', round((time.time() - start_time)*1000, 2))

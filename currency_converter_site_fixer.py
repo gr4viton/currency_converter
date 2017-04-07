@@ -14,10 +14,9 @@ from parameter_names_enums import JsonParameterNames as jpn
 class CurrencyConverterSiteFixer(CurrencyConverterSite):
     name = 'fixer'
 
-    def __init__(self, name, base, strs):
-        self.name = name
-        self.base = base
-        self.strs = strs
+    def __init__(self):
+        self.init_site_specifications()
+
         self.my_params = None
         self.rates = None
 
@@ -27,6 +26,19 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         self.timeout = 1  # url response timeout in seconds
         self.in_ccode = None
         self.responded = False
+
+    def init_site_specifications(self):
+        self.name = 'fixer'
+        self.base = 'http://api.fixer.io/'
+        self.strs = {
+            jpn.key_output: 'rates',
+            jpn.key_in_ccode: 'base',
+            jpn.var_in_ccode: 'base',
+            jpn.var_out_ccode: 'symbols',
+            jpn.path_latest: 'latest',
+            jpn.key_date: 'date',
+            jpn.key_date_format: 'YYYY-MM-DD',
+        }
 
     def create_url(self):
         self.base_url = self.base + self.strs[jpn.path_latest]
