@@ -9,6 +9,7 @@ License:    GPLv3 @ http://www.gnu.org/licenses/gpl-3.0.html
 
 Disclaimer: I apologize for the "long" code.
             I tried to create it universally with modularity in mind
+            I use retrospective as an antonym to chronological, even it is not a correct global meaning.
 """
 
 import requests
@@ -75,7 +76,7 @@ class CurrencyConverter():
             jpn.key_output: 'output'}
 
     def __init__(self, use_redis, ccs_sites_list=[]):
-        """Calls indiviual initialization methods"""
+        """Calls individual initialization methods"""
         self._sites_file_ = 'sites.pickle'  # for development only
         self.in_amount = None
         self.in_currency = None
@@ -95,11 +96,13 @@ class CurrencyConverter():
     def _init_sql_(self):
         """Initialize offline sql disk database variables"""
         self._valid_database_exists = None
+        self.db_valid_from = None
         self.use_sql = True
         self.db_engine_path = 'sqlite:///db\\exchange_rates.db'
         self.db_file = 'db/exchange_rates.db'
         self.rates_table_name = 'rates'
         self.engine = None
+        self.database_digits = 4
 
     def _init_txt_(self):
         """Initialize txt file for database valid_to date storing"""
@@ -157,6 +160,32 @@ class CurrencyConverter():
             g_end('redisworks root initialized')
             prinf('Redis works root server running.')
 
+    @property
+    def valid_database_exists(self):
+        """Returns True if valid sql database exists
+
+        on first getting it runs a test for database existance (refresh_db_valid_from)
+        """
+        if self._valid_database_exists is None:
+            self.refresh_db_valid_from()
+        return self._valid_database_exists
+
+    @staticmethod
+    def internet_on():
+        """Tries to reach google.com to find out if the connection to internet is established
+
+        returns True on conected to internet False otherwise
+        """
+        try:
+            # connect to the google.com -- tells us if the host is actually reachable
+            g_start()
+            socket.create_connection(("www.google.com", 80), timeout=1)
+            g_end('connection to internet is available')
+            return True
+        except OSError:
+            pass
+        return False
+    
     def _load_sites_from_pickle_(self):
         """Loads exchange rates pandas DataFrame from local pickle
 
@@ -176,7 +205,12 @@ class CurrencyConverter():
             prinf('%s saved', self._sites_file_)
 
     def create_rates_table_in_pandas(self, site):
+        """Extrapolates data exchange rates from the site to create rates between each currency
 
+        - takes all the rates from the sites relative to the base input currency code
+        - extrapolates individual rates between every currency and saves them into DataFrame
+        - rounds the stored exchange rates to [self.database_digits] decimal places
+        """
         base = site.in_ccode
         ccodes_rates = [(key, site.rates[key]) for key in sorted(site.rates.keys())]
         ccodes, rates = zip(*ccodes_rates)
@@ -185,40 +219,44 @@ class CurrencyConverter():
         df.index = ccodes
 
         # calculate other values from base column - do not round digits
+        r = self.database_digits
         for col_ccode in ccodes:
             if col_ccode != base:
                 #col = [df[base].loc[row_ccode] / df[base].loc[col_ccode] for row_ccode in ccodes]
-                col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], 4) for row_ccode in ccodes]
+                col = [round(df[base].loc[row_ccode] / df[base].loc[col_ccode], r) for row_ccode in ccodes]
                 df[col_ccode] = col
 
         rates_df = df
-
-        rates_info_lines = '\n'.join([str(i) for i in [site.valid_from_utc, site.valid_to_utc,
-                                                            site.name, base]])
+        rates_info_lines = '\n'.join([str(i) for i in
+                                      [site.valid_from_utc, site.valid_to_utc, site.name, base]])
 
         return rates_df, rates_info_lines
 
     def save_to_sql(self, rates_df, rates_info_lines):
+        """Saves rates database into sql file and database info file to disk"""
         self.create_engine()
         self.touch_db_file()
         with self.engine.connect() as conn, conn.begin():
+            # rates sql database
             g_start()
             rates_df.to_sql(self.rates_table_name, conn, if_exists='replace')
             g_end('saved rates_df.to_sql')
 
-            # write to file too
+            # database info file
             g_start()
             with open(self.rates_info_txt_file, 'w', encoding=self.encoding) as f:
                 f.writelines(rates_info_lines)
             g_end('saved rates_info_txt_file')
 
     def create_engine(self):
+        """Creates engine for sql database manipulation, if one does not exist yet"""
         g_start()
         if self.engine is None:
             self.engine = create_engine(self.db_engine_path)
         g_end('created engine')
 
     def db_file_exist(self):
+        """Returns True when database file exists, False otherwise"""
         return Path(self.db_file).is_file()
 
     def get_rates_from_sql(self, in_ccode=None, out_ccode=None):
@@ -279,20 +317,6 @@ class CurrencyConverter():
             self.use_sql = False
             return None
 
-    def internet_on(self):
-        """Tries to reach google.com to find out if the connection to internet is established
-
-        returns True on conected to internet False otherwise
-        """
-        try:
-            # connect to the google.com -- tells us if the host is actually reachable
-            g_start()
-            socket.create_connection(("www.google.com", 80), timeout=1)
-            g_end('connection to internet is available')
-            return True
-        except OSError:
-            pass
-        return False
 
     def refresh_db_valid_from(self):
         """Updates offline sql database valid_from utc time
@@ -318,7 +342,6 @@ class CurrencyConverter():
                 else:
                     db_valid_to_str, db_valid_from_str = whole[0:2]
                     db_valid_from = arrow.get(db_valid_from_str)
-                    #db_valid_to = arrow.get(db_valid_to_str)
 
             g_end('loaded rates_info_txt_file') # ~ 8 ms
             return db_valid_from
@@ -326,30 +349,54 @@ class CurrencyConverter():
             prinw('rates_info_txt_file does not exist')
             return None
 
-
-    def get_utc_now(self):
+    @staticmethod
+    def get_utc_now():
         """Returns current UTC time
 
         if global DEBUG variable contains 'simulate_time', the time will be shifted 12 days to the future
         for the offline database update triggering
         """
         global DEBUG
-        # simulating different time
         utc_now = arrow.utcnow()
         prinf('%s utc_now', utc_now)
-        if 'simulate_time' in DEBUG:
+        if 'simulate_time' in DEBUG:  # simulating different time
             utc_now = utc_now.shift(days=+12, hours=+4)
             prinf('%s simulated utc_now', utc_now)
         return utc_now
 
+    def update_database_from_site(self, site):
+        """Requires exchange rates data from the site and processes them
+
+        - requires all rates data from the currency conversion site
+        - creates pandas representation of all the exchange rates
+        - saves them to the sql database
+
+        returns - tuple of:
+            [update_success] = True on successful data processing, False otherwise
+            [response_success] = True when successfully received data, False otherwise
+        """
+        response_success = site.get_all_rates()
+        if not response_success:
+            return False, response_success
+
+        rates_df, rates_info_lines = self.create_rates_table_in_pandas(site)
+        update_success = True
+        if self.use_sql:
+            self.save_to_sql(rates_df, rates_info_lines)
+        else:
+            prinw('Not using offline sql database!')
+
+        return update_success, response_success
+
 
     def try_update_database_from_sites(self, sorted_sites):
-        """Gets all successfulness of cc-sites responses (get_all_rates) = True / False
+        """Tries to updates offline database from the freshest site, if not successful continues with another
 
-        - counts unsuccessful atempts into [no_response_count]
+        - counts unsuccessful attempts into [no_response_count]
         -- triggers internet connection detection [internet_on] when past [no_response_trigger]
         - does not store the returns as they are stored in individual cc-sites class instances [site.rates]
-        return True on at least one successfull cc-site response, False otherwise
+
+        returns - True on at least one successful cc-site response, False otherwise
         """
         no_response_trigger = self.no_response_trigger
         responded = not_responded = 0
@@ -373,73 +420,27 @@ class CurrencyConverter():
                 break
         return update_success
 
-    def update_database_from_site(self, site):
-        """
+    def get_retrospectively_sorted_sites(self, only_sites_fresher_than_db=False):
+        """Returns list sites which are ordered retrospectively from the site with freshest data update
 
-        - if more sites are passed as argument [sites]
-        -- selects the site with the latest update from them all
-        """
-        # need to get data from the internet
-        response_success = site.get_all_rates()
+        - updates all sites [last_updated] utc time according to their update schedule (refresh_last_updated)
+        - filters out sites not fresher then the database if initiated (only_sites_fresher_than_db = True)
+        - sort according to reversed chronological order (~ retrospective)
 
-        rates_df, rates_info_lines = self.create_rates_table_in_pandas(site)
-        update_success = True
-        # store them to database
-        if self.use_sql:
-            self.save_to_sql(rates_df, rates_info_lines)
-        else:
-            prinw('Not using offline sql database!')
-
-        return update_success, response_success
-
-    def get_chronologically_sorted_sites(self, only_sites_fresher_than_db=False):
-        """
+        returns - sorted list of sites
         """
         utc_now = self.get_utc_now()
-        [site.refresh_last_updated(utc_now)            for site in self.sites]
+        [site.refresh_last_updated(utc_now) for site in self.sites]
+
         # if only_sites_fresher_than_db - get only sites which have data fresher then database
         sites = [site for site in self.sites
-                 if not only_sites_fresher_than_db
-                    or site.fresher_than_db(self.db_valid_from)
+                 if site.fresher_than_db(self.db_valid_from) or not only_sites_fresher_than_db
                  ]
-        sorted_sites = sorted(sites, key=lambda site: site.last_updated)
+        sorted_sites = sorted(sites, key=lambda site: site.last_updated, reverse=True)
         return sorted_sites
 
-    @property
-    def valid_database_exists(self):
-        if self._valid_database_exists is None:
-            self.refresh_db_valid_from()
-        return self._valid_database_exists
-
     def update_rates_data_if_needed(self):
-        """Collect the latest rates from internet if the offline database is outdated
-
-        if database
-        - get database valid_from time (db_valid_from)
-        - update sites latest_updated times
-        - get sites update_needed
-        - sort update_needed sites according to last_updated
-        - try with the latest site
-
-            -- connect and
-            update database
-        -- if not try with another !!
-        -- if no response - error
-
-        if not database
-        - update sites latest_updated times
-        - sort update_needed sites according to last_updated
-        - try with the latest site
-
-            -- connect and
-            update database
-        -- if not try with another !!
-        -- if no response - error
-
-        - find out if any cconversion site has more fresh data (get_sites_states)
-        - gets the most fresh site and update the offline database (update_database_from_site)
-
-        """
+        """Main decision tree for rates database update from internet"""
 
         if self.valid_database_exists:
             # we need only new data (fresher then database)
@@ -448,14 +449,13 @@ class CurrencyConverter():
             # no database - just try to get data
             only_sites_fresher_than_db = False
 
-        # get sites ordered chronologically from the one with freshest last_updated utc time
-        sorted_sites = self.get_chronologically_sorted_sites(only_sites_fresher_than_db)
+        # get sites ordered retrospectively from the one with freshest last_updated utc time
+        sorted_sites = self.get_retrospectively_sorted_sites(only_sites_fresher_than_db)
 
         # try to update offline database starting with the freshest
         any_success = self.try_update_database_from_sites(sorted_sites)
         if not any_success:
             prinw('Conversion rates data were not available in any cconversion site!')
-
 
 
     def convert_to_ccode(self):
@@ -544,6 +544,18 @@ def parse_arguments():
 
     return amount, input_cur, output_cur
 
+def setup_redis(use_redis=True, use_redis_on_windows=False):
+    """The platform detection and redis usage decision tree is hereby created
+
+    as on tested Windows 7 64bit (MSOpenTech 3.2.100) there was one second time penalty
+    on first contact with redis
+    """
+    truly_use_redis = use_redis
+    if platform.system() == 'Windows':
+        truly_use_redis = use_redis_on_windows
+        prinw('Not using redis - Windows platform has 1 sec latency on first contact!')
+    return truly_use_redis
+
 if __name__ == '__main__':
     """Converts amount of currency according to program arguments
     - Program arguments parsing
@@ -551,19 +563,13 @@ if __name__ == '__main__':
     - CurrencyConverter initializaton
     - Conversion according to parsed arguments
     """
-    #start_time = time.time()
     g_start('complete code')
 
     # parsing of arguments
     params = parse_arguments()
 
     # redis usage
-    use_redis = True
-    use_redis_on_windows = False
-    if platform.system() == 'Windows':
-        # on windows - 1 sec time penalty on first contact with redis
-        use_redis = use_redis_on_windows
-        prinw('Not using redis - Windows platform has 1 sec latency on first contact!')
+    use_redis = setup_redis(use_redis=True, use_redis_on_windows=False)
 
     # main code
     cc = CurrencyConverter(use_redis=use_redis)
@@ -571,7 +577,4 @@ if __name__ == '__main__':
     cc.convert(*params)
 
     g_end('complete program run', 'complete code')
-    #prinf('%s ms - complete code', round((time.time() - start_time)*1000, 2))
     # ~ 44 ms on windows w/o redis
-
-    #print('\n'.join(dir(cc)))
