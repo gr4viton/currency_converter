@@ -13,7 +13,7 @@ from parameter_names_enums import JsonParameterNames as jpn
 from global_timer import g_start, g_end
 
 
-class CurrencyConverterSiteApilayer():
+class CurrencyConverterSiteCurrencylayer():
     """Free currency conversion site apilayer with Api interface class
 
     merge of sites currencylayer and
@@ -86,18 +86,16 @@ class CurrencyConverterSiteApilayer():
     def stamp_time(utc):
         """Adds time in day of the update
 
-        The rates are updated daily around 4PM CET @ fixer.io
-        Central European Time is 1 hour ahead of Coordinated Universal Time
-        = 3PM UTC - for certainity 15:30
+        The rates are updated every hour for the free plan at currencylayer.com
         """
-        return utc.replace(hour=15, minute=30, second=0, microsecond=0)
+        return utc.replace(minute=0, second=0, microsecond=0)
 
     @staticmethod
     def stamp_valid_to(utc):
-        """Adds valid_to time - as fixer.io rates are valid for one day
+        """Adds valid_to time - as currencylayer.com rates are valid for one hour
 
         minus one second for no overlapping"""
-        return utc.shift(days=+1, seconds=-1)
+        return utc.shift(hours=+1, seconds=-1)
 
     @classmethod
     def get_site_last_updated(cls, utc_now=None):

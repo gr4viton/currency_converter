@@ -38,7 +38,7 @@ from logging import error as prine
 from parameter_names_enums import JsonParameterNames as jpn
 from currency_symbol_converter import CurrencySymbolConverter
 from currency_converter_site_fixer import CurrencyConverterSiteFixer as CCS_Fixer
-from currency_converter_site_apilayer import CurrencyConverterSiteApilayer as CCS_Apilayer
+from currency_converter_site_currencylayer import CurrencyConverterSiteCurrencylayer as CCS_Currencylayer
 
 from global_timer import g_start, g_end
 
@@ -104,7 +104,7 @@ class CurrencyConverter():
         """Initialize currency conversion sites"""
         self.sites = [
             #CCS_Fixer(),
-            CCS_Apilayer(),
+            CCS_Currencylayer(),
         ]
         self.sites.extend(ccs_sites_list)
         # when using more cconverter sites - it can happen that some of them do not respond
