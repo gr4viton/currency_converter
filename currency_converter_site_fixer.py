@@ -11,6 +11,8 @@ from logging import error as prine
 from currency_converter_site import CurrencyConverterSite
 from parameter_names_enums import JsonParameterNames as jpn
 
+from global_timer import g_start, g_end
+
 class CurrencyConverterSiteFixer(CurrencyConverterSite):
     name = 'fixer'
 
@@ -25,7 +27,7 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
 
         self.timeout = 1  # url response timeout in seconds
         self.in_ccode = None
-        self.responded = False
+        self.response_success = False
 
     def init_site_specifications(self):
         self.name = 'fixer'
@@ -48,8 +50,8 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         if out_ccode:
             self.my_params.update({self.strs[jpn.var_out_ccode] : out_ccode})
 
-    def stamp_datetime(self):
-        date_cet = self.response.json()[self.strs[jpn.key_date]]
+    def update_rates_valid_data(self):
+        date_cet = self.response_data.json()[self.strs[jpn.key_date]]
         fmt = self.strs[jpn.key_date_format]
         date_time = arrow.get(date_cet, fmt)
         self.valid_from_utc = self.__class__.stamp_time(date_time)
@@ -71,12 +73,8 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         # = valid for one day
         return utc.shift(days=+1, seconds=-1)
 
-#    def latest_rates_update(self, utc_now=None):
-#        return self.__class__.latest_rates_update(utc_now=utc_now)
-
     @classmethod
-    def latest_rates_update(cls, utc_now=None):
-
+    def get_site_last_updated(cls, utc_now=None):
         if utc_now is None:
             utc_now = arrow.utcnow()
 
@@ -88,59 +86,49 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
 
         return update_time
 
-    def latest_rates_update(self, utc_now=None):
-        self.last_updated = self.__class__.latest_rates_update(utc_now)
+    def refresh_last_updated(self, utc_now=None):
+        self.last_updated = self.__class__.get_site_last_updated(utc_now)
 
-    def new_rates_available(self, utc_db_valid_from, utc_now=None):
-        self.last_updated = self.__class__.latest_rates_update(utc_now)
-        self.update_needed = self.latest_rates_update > utc_db_valid_from
-        # False: current database data are latest - no new request needed
-        # True: this site has more fresh data
+    def fresher_than_db(self, utc_db_valid_from):
+        return self.last_updated > utc_db_valid_from
 
-        prinf('%s site', self.name)
-        prinf('%s latest_rates_update', self.latest_rates_update)
-        prinf('%s db_valid_to', utc_db_valid_to)
-
-    def _start_(self):
-        self._start_time_ = time.time()
-
-    def _end_(self, text=''):
-        end_time = time.time() - self._start_time_
-        prinf('%s ms %s', round(end_time*1000,2), text)
-        return end_time
-
-    def get_response(self):
-        self.responded = False
+    def acquire_rates_data(self):
         prinf('%s params: %s', self.base_url, self.my_params)
-        self._start_()
+        g_start()
         try:
-            self.response = requests.get(self.base_url, params=self.my_params, timeout=self.timeout)
+            self.response_data = requests.get(self.base_url, params=self.my_params, timeout=self.timeout)
         except OSError:
             prinw('%s host not available', self.name)
-            self.response = None
-        self._end_('request responded')
+            return False
+        g_end('request responded')
 
-        if not self.response:
-            return None
+        if not self.response_data:
+            return False
         else:
-            prinf(self.response.status_code)
-            if self.response.status_code > 400 :
-                prinw('%s currency converter site response not found. %s', self.name, self.response.status_code)
-                return None
-            elif self.response.status_code == 200:
+            status_code = self.response_data.status_code
+            prinf(status_code )
+            if status_code > 400 :
+                prinw('%s currency converter site response not found. %s', self.name, status_code)
+                return False
+            elif status_code == 200:
                 prinf('%s response ok', self.name)
 
-        self.in_ccode = self.response.json()[self.strs[jpn.key_in_ccode]]
-        self.stamp_datetime()
+        self.in_ccode = self.response_data.json()[self.strs[jpn.key_in_ccode]]
+        
+        self.update_rates_valid_data()
 
-        self.rates = self.response.json()[self.strs[jpn.key_output]]
+        self.rates = self.response_data.json()[self.strs[jpn.key_output]]
+
+        # as requested ccode is not in the request respond
+        # we add it => e.g 1 EUR = 1 EUR => needed for further pandas extrapolation
         self.rates.update({self.in_ccode: float(1)})
-        self.responded = True
+
+        return True
 
     def get_all_rates(self):
         self.create_url()
-        response = self.get_response()
-        return self.responded
+        self.response_success = self.acquire_rates_data()
+        return self.response_success
 
     def get_this_rate_for_ccode(self, in_ccode, out_ccode, start_params={}):
         self.my_params = start_params
