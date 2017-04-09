@@ -141,7 +141,7 @@ class CurrencyConverterSiteFixer():
         self.rates.update({self.in_ccode: float(1)})
         return True
 
-    def get_all_rates(self, in_ccode=None, out_ccode=None):
+    def get_all_rates(self, in_ccode=None, out_ccode=None, req_params_dict={}):
         """Requests and acquires all rates data from the site
 
         - if no in_ccode nor out_ccode is specified - requests all rates for site base currency
@@ -150,6 +150,7 @@ class CurrencyConverterSiteFixer():
 
         returns - True on success, False otherwise
         """
+        self.my_params = req_params_dict
         self.create_url()
         self.update_params(in_ccode=in_ccode, out_ccode=out_ccode)
         self.response_success = self.acquire_rates_data()

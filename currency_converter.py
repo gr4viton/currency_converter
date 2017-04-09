@@ -35,22 +35,17 @@ from logging import debug as prind
 from logging import warning as prinw
 from logging import error as prine
 
-#logging.basicConfig(filename='run.log', filemode='w', level=logging.DEBUG)
 logging.basicConfig(level=logging.DEBUG)
-#logging.basicConfig(level=logging.WARNING
+# logging.basicConfig(level=logging.WARNING
 pd.options.display.max_rows = 20
 
 global DEBUG
 DEBUG = ''  # 'simulate_time,'
-DEBUG = 'simulate_time,'
+#DEBUG = 'simulate_time,'
 
-#TODO
+# TODO
 # [] one commit - in master branch - multiple in other branches
 # [] another site then fixer
-# [] currency symbol converter text file
-# [] comments & docstrings
-# [] PIP8
-# [] readme.md
 # [] commit to master
 
 
