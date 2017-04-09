@@ -47,7 +47,7 @@ DEBUG = 'simulate_time,'
 #TODO
 # [] one commit - in master branch - multiple in other branches
 # [] another site then fixer
-# [] comments
+# [] comments & docstrings
 # [] PIP8
 # [] readme.md
 # [] commit to master
@@ -185,7 +185,22 @@ class CurrencyConverter():
         except OSError:
             pass
         return False
-    
+
+    @staticmethod
+    def get_utc_now():
+        """Returns current UTC time
+
+        if global DEBUG variable contains 'simulate_time', the time will be shifted 12 days to the future
+        for the offline database update triggering
+        """
+        global DEBUG
+        utc_now = arrow.utcnow()
+        prinf('%s utc_now', utc_now)
+        if 'simulate_time' in DEBUG:  # simulating different time
+            utc_now = utc_now.shift(days=+12, hours=+4)
+            prinf('%s simulated utc_now', utc_now)
+        return utc_now
+
     def _load_sites_from_pickle_(self):
         """Loads exchange rates pandas DataFrame from local pickle
 
@@ -259,6 +274,24 @@ class CurrencyConverter():
         """Returns True when database file exists, False otherwise"""
         return Path(self.db_file).is_file()
 
+    def touch_db_file(self):
+        """Tries to create empty database file at the desired location
+
+        if unsuccessfully it disables sql database usage
+        - the exchange rates from cc-sites will not be stored
+        """
+        if not self.db_file_exist():
+            # create empty database file
+            open(self.db_file, 'a').close()
+
+        if not self.db_file_exist():
+            prinw("""Offline database file is not present, even after creation attempt."""
+                  """\nPlease create empty file in this path: <%s>"""
+                  """\nWorking without offline sql database can be slow - for every request there is internet connection needed"""
+                  , str(Path(self.db_file)))
+            self.use_sql = False
+            return None
+
     def get_rates_from_sql(self, in_ccode=None, out_ccode=None):
         """Queries the sql database for input rates according to input arguments [in_ccode, out_ccode]
 
@@ -299,25 +332,6 @@ class CurrencyConverter():
         else:
             return None
 
-    def touch_db_file(self):
-        """Tries to create empty database file at the desired location
-
-        if unsuccessfully it disables sql database usage
-        - the exchange rates from cc-sites will not be stored
-        """
-        if not self.db_file_exist():
-            # create empty database file
-            open(self.db_file, 'a').close()
-
-        if not self.db_file_exist():
-            prinw("""Offline database file is not present, even after creation attempt."""
-                  """\nPlease create empty file in this path: <%s>"""
-                  """\nWorking without offline sql database can be slow - for every request there is internet connection needed"""
-                  , str(Path(self.db_file)))
-            self.use_sql = False
-            return None
-
-
     def refresh_db_valid_from(self):
         """Updates offline sql database valid_from utc time
 
@@ -349,21 +363,6 @@ class CurrencyConverter():
             prinw('rates_info_txt_file does not exist')
             return None
 
-    @staticmethod
-    def get_utc_now():
-        """Returns current UTC time
-
-        if global DEBUG variable contains 'simulate_time', the time will be shifted 12 days to the future
-        for the offline database update triggering
-        """
-        global DEBUG
-        utc_now = arrow.utcnow()
-        prinf('%s utc_now', utc_now)
-        if 'simulate_time' in DEBUG:  # simulating different time
-            utc_now = utc_now.shift(days=+12, hours=+4)
-            prinf('%s simulated utc_now', utc_now)
-        return utc_now
-
     def update_database_from_site(self, site):
         """Requires exchange rates data from the site and processes them
 
@@ -387,7 +386,6 @@ class CurrencyConverter():
             prinw('Not using offline sql database!')
 
         return update_success, response_success
-
 
     def try_update_database_from_sites(self, sorted_sites):
         """Tries to updates offline database from the freshest site, if not successful continues with another
@@ -456,7 +454,6 @@ class CurrencyConverter():
         any_success = self.try_update_database_from_sites(sorted_sites)
         if not any_success:
             prinw('Conversion rates data were not available in any cconversion site!')
-
 
     def convert_to_ccode(self):
         """Converts in_code and out_code to ccode
@@ -543,6 +540,7 @@ def parse_arguments():
     output_cur = args.output_currency
 
     return amount, input_cur, output_cur
+
 
 def setup_redis(use_redis=True, use_redis_on_windows=False):
     """The platform detection and redis usage decision tree is hereby created

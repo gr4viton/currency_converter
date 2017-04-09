@@ -19,13 +19,14 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
     def __init__(self):
         self.init_site_specifications()
 
-        self.my_params = None
-        self.rates = None
+        self.my_params = None  # parameters for site requests
+        self.rates = None  # exchange rates from the site
+        self.timeout = 1  # url response timeout in seconds
 
+        # retrieved rates validity
         self.valid_from_utc = None
         self.valid_to_utc = None
 
-        self.timeout = 1  # url response timeout in seconds
         self.in_ccode = None
         self.response_success = False
 
@@ -130,7 +131,7 @@ class CurrencyConverterSiteFixer(CurrencyConverterSite):
         self.response_success = self.acquire_rates_data()
         return self.response_success
 
-    def get_this_rate_for_ccode(self, in_ccode, out_ccode, start_params={}):
+    def get_one_rate_for_ccode(self, in_ccode, out_ccode, start_params={}):
         self.my_params = start_params
         self.create_url()
         self.update_params(in_ccode=in_ccode, out_ccode=out_ccode)
