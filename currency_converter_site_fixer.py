@@ -58,7 +58,7 @@ class CurrencyConverterSiteFixer():
 
     def update_rates_valid_data(self):
         """Updates validation utc times from site response cet time"""
-        date_cet = self.response_data.json()[self.strs[jpn.key_date]]
+        date_cet = str(self.response_data.json()[self.strs[jpn.key_date]])
         fmt = self.strs[jpn.key_date_format]
         date_time = arrow.get(date_cet, fmt)
         self.valid_from_utc = self.__class__.stamp_time(date_time)
@@ -142,6 +142,20 @@ class CurrencyConverterSiteFixer():
         self.rates.update({self.in_ccode: float(1)})
         return True
 
+    def preprocess_rates(self):
+        """Converts the acquired rates json dictionary data into common format
+
+         {
+         out_ccode : float(amount)
+         ...
+         }
+        """
+        # the rates from fixar.io are almost exactly in the required common format
+        # as requested ccode is not in the request respond
+        # we add it => e.g 1 EUR = 1 EUR => needed for further pandas extrapolation
+        self.rates.update({self.in_ccode: float(1)})
+
+
     def get_all_rates(self, in_ccode=None, out_ccode=None, req_params_dict={}):
         """Requests and acquires all rates data from the site
 
@@ -155,4 +169,5 @@ class CurrencyConverterSiteFixer():
         self.create_url()
         self.update_params(in_ccode=in_ccode, out_ccode=out_ccode)
         self.response_success = self.acquire_rates_data()
+        self.preprocess_rates()
         return self.response_success
