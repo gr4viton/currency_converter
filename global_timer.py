@@ -12,11 +12,13 @@ from logging import error as prine
 timers = {}
 
 def g_start(timer_name=None):
+    """Starts a global timer with a name"""
     if timer_name is None:
         timer_name = 'default'
     timers[timer_name] = time.time()
 
 def g_end(text, timer_name=None):
+    """Ends a global timer measurement and prinfs it"""
     if timer_name is None:
         timer_name = 'default'
     if timer_name not in timers.keys():
@@ -28,6 +30,7 @@ def g_end(text, timer_name=None):
     return ms
 
 if __name__ == '__main__':
+    """Shows usage of named and unnamed global timers"""
     logging.basicConfig(level=logging.DEBUG)
     g_start()
     time.sleep(1)

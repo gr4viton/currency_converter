@@ -8,10 +8,9 @@ from logging import debug as prind
 from logging import warning as prinw
 from logging import error as prine
 
-from currency_converter_site import CurrencyConverterSite
 from parameter_names_enums import JsonParameterNames as jpn
 
-class CurrencyConverterSiteApilayer(CurrencyConverterSite):
+class CurrencyConverterSiteApilayer():
 
     def __init__(self):
         self.init_site_specifications()

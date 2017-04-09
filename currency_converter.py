@@ -47,6 +47,7 @@ DEBUG = 'simulate_time,'
 #TODO
 # [] one commit - in master branch - multiple in other branches
 # [] another site then fixer
+# [] currency symbol converter text file
 # [] comments & docstrings
 # [] PIP8
 # [] readme.md
@@ -57,7 +58,6 @@ from parameter_names_enums import JsonParameterNames as jpn
 
 from currency_symbol_converter import CurrencySymbolConverter
 
-#from currency_converter_site import CurrencyConverterSite
 from currency_converter_site_fixer import CurrencyConverterSiteFixer as CCS_Fixer
 from currency_converter_site_apilayer import CurrencyConverterSiteApilayer as CCS_Apilayer
 

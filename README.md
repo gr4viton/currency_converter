@@ -75,6 +75,7 @@ Program for conversion from one currency to another
 -- common CurrencyConverterSite class hertitage for every new conversion site
 - multithreading - load from database at start in different thread - use the data or not later
 -- after finding the offline data are not fresh enough
+- CurrencySymbolConverter loading currency symbols from a file on disk (possibly slower)
 - automatic database update as a background service
 -- would update sql database and redis automatically not needed to check every time the convert is triggered
 - automatic testing via asserts and node2 module
