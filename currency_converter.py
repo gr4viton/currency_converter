@@ -103,8 +103,8 @@ class CurrencyConverter():
     def _init_cc_sites_(self, ccs_sites_list):
         """Initialize currency conversion sites"""
         self.sites = [
-            #CCS_Fixer(),
-            CCS_Currencylayer(),
+            CCS_Fixer(),
+            #CCS_Currencylayer(),
         ]
         self.sites.extend(ccs_sites_list)
         # when using more cconverter sites - it can happen that some of them do not respond
