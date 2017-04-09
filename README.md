@@ -65,6 +65,10 @@ Program for conversion from one currency to another
   	- user gets better response time, but the first time he calls, he can get outdated rates
    		- we certainly do not want that on the first start after a long time (olddated sql database)
    		- it can be implemented w/o further ado, but only if the server with redis is updated frequently
+#### [x] fixer.io database update
+ - as I was naive and trusted something written on the internet page, I did not implement online rates database update retardation
+ - for example now (09-04-2017 Sunday) the latest online fixer.io rates database is from 07-04-2017, even they state it is updated daily around 15:00 CET
+ - so if you encaunter the offline database is never used, it can be due to the fact the free currency sites update times can be sometimes missleading
 
 ### Not implemented (yet) - future releases maybe
 - full redis support for rates
@@ -82,6 +86,8 @@ Program for conversion from one currency to another
 - automatic database update as a background service
 	- would update sql database and redis automatically not needed to check every time the convert is triggered
 - automatic testing via asserts and node2 module
+- online conversion site rates database update retardation detection
+    - e.g. detect when "daily" updated site is not updated for 3 days - do not try to contact it every time for the old data completely ignoring the valid data at the offline sql database
 - user input error autocorrection
 	- suggestion of the textually nearest currency
 	- another program argument for automatic nearest suggestion conversion
