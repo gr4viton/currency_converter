@@ -144,7 +144,7 @@ class CurrencyConverter():
         first_contact = g_end('first redis access')
         g_start()
         redis_running = redis_db.get('redis') == 'running'  # takes ~ 0.1 ms on windows
-        g_end('second redis access')
+        g_end('second redis access', 'd')
         redis_running = redis_db.info()['loading'] == 0
 
         if first_contact > self.first_contact_max_sec:
@@ -391,53 +391,6 @@ class CurrencyConverter():
             prinw('Not using offline sql database!')
 
         return update_success, response_success
-
-    def get_latest_site(self, update_needed=False):
-        """Finds out which cc-site can give us the most fresh rates
-
-        returns None if none of the cc-sites has more fresh rates data if [update_needed] is True
-        """
-        if update_needed:
-            self.update_new_rates_availability()
-            latest_update_times = [site.last_updated for site in self.sites if site.update_needed]
-        else:
-            self.sites_update_last_updated()
-            latest_update_times = [site.last_updated for site in self.sites ]
-        if len(latest_update_times) > 0:
-            _, idx = max(latest_update_times)
-            freshest = self.sites[idx]
-            prinf('%s is the most fresh site', freshest.name)
-            return freshest
-        else:
-            return None
-
-    def get_latest_site_than_database(self):
-        """Finds out which cc-site can give us the most fresh rates
-
-        returns None if none of the cc-sites has more fresh rates data
-        """
-        return get_latest_site(update_needed=True)
-
-    def get_latest_site_from_now(self):
-        return get_latest_site(update_needed=False)
-
-    def sites_update_new_rates_availability(self):
-        """Updates [latest_updated] date and [update_needed] for all cc-sites
-
-        - according to [utc_now] and database [valid_from] date
-        """
-        utc_now = self.get_utc_now()
-        utc_db_valid_from = self.get_db_valid_from()
-        [site.new_rates_available(utc_db_valid_from, utc_now) for site in self.sites]
-
-    def sites_update_last_updated(self):
-        """Updates [latest_updated] date for all cc-sites
-
-        - according to [utc_now]
-        """
-        utc_now = self.get_utc_now()
-        [site.latest_rates_update(utc_now) for site in self.sites]
-
 
     def get_chronologically_sorted_sites(self, only_sites_fresher_than_db=False):
         """
