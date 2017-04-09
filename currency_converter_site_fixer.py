@@ -14,6 +14,7 @@ from global_timer import g_start, g_end
 
 
 class CurrencyConverterSiteFixer():
+    """Free currency conversion site fixer.io with Api interface class"""
     name = 'fixer'
 
     def __init__(self):

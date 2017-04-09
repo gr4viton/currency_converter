@@ -10,7 +10,11 @@ from logging import error as prine
 
 from parameter_names_enums import JsonParameterNames as jpn
 
+from global_timer import g_start, g_end
+
+
 class CurrencyConverterSiteApilayer():
+    name = 'apilayer'
 
     def __init__(self):
         self.init_site_specifications()

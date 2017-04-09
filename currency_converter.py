@@ -35,28 +35,20 @@ from logging import debug as prind
 from logging import warning as prinw
 from logging import error as prine
 
-logging.basicConfig(level=logging.DEBUG)
-# logging.basicConfig(level=logging.WARNING
-pd.options.display.max_rows = 20
-
-global DEBUG
-DEBUG = ''  # 'simulate_time,'
-#DEBUG = 'simulate_time,'
-
-# TODO
-# [] one commit - in master branch - multiple in other branches
-# [] another site then fixer
-# [] commit to master
-
-
 from parameter_names_enums import JsonParameterNames as jpn
-
 from currency_symbol_converter import CurrencySymbolConverter
-
 from currency_converter_site_fixer import CurrencyConverterSiteFixer as CCS_Fixer
 from currency_converter_site_apilayer import CurrencyConverterSiteApilayer as CCS_Apilayer
 
 from global_timer import g_start, g_end
+
+logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.WARNING)
+pd.options.display.max_rows = 20
+
+global DEBUG  # DEBUG = 'simulate_time,'
+DEBUG = ''
+
 
 class CurrencyConverter():
     """Takes care of all the currency conversion bussiness:
