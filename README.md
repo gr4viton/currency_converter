@@ -1,4 +1,5 @@
 # Currency converter - task from kiwi
+*version 1.0*
 
 Program for conversion from one currency to another
 
