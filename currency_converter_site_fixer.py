@@ -105,6 +105,11 @@ class CurrencyConverterSiteFixer():
 
     def fresher_than_db(self, utc_db_valid_from):
         """Returns True if this site has fresher data then the database"""
+
+        if utc_db_valid_from is None:
+            # in case no database is found
+            utc_db_valid_from = arrow.utcnow()
+        
         return self.last_updated > utc_db_valid_from
 
     def acquire_rates_data(self):
