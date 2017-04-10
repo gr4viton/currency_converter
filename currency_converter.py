@@ -383,8 +383,12 @@ class CurrencyConverter():
 
         returns - True on at least one successful cc-site response, False otherwise
         """
+        if len(sorted_sites) == 0:
+            return True
+
         no_response_trigger = self.no_response_trigger
         responded = not_responded = 0
+        update_success = False
         for site in sorted_sites:
             update_success, response_success = self.update_database_from_site(site)
             if not update_success:
@@ -436,6 +440,9 @@ class CurrencyConverter():
 
         # get sites ordered retrospectively from the one with freshest last_updated utc time
         sorted_sites = self.get_retrospectively_sorted_sites(only_sites_fresher_than_db)
+        if len(sorted_sites) == 0 and self.valid_database_exists:
+            prinf('No fresher site than database - using sql database rates.')
+            return
 
         # try to update offline database starting with the freshest
         any_success = self.try_update_database_from_sites(sorted_sites)
