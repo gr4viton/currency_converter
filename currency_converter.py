@@ -42,8 +42,8 @@ from currency_converter_site_currencylayer import CurrencyConverterSiteCurrencyl
 
 from global_timer import g_start, g_end
 
-logging.basicConfig(level=logging.DEBUG)
-# logging.basicConfig(level=logging.WARNING)
+#logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.ERROR)
 pd.options.display.max_rows = 20
 
 global DEBUG  # DEBUG = 'simulate_time,'
